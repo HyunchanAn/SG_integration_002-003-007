@@ -17,6 +17,36 @@
 - CUDA 12.x 및 NVIDIA GPU 환경 (RTX 5080 가속 대응)
 - 추가 패키지 의존성 (requirements.txt 명세)
 
+## 모델 가중치 다운로드
+
+본 저장소는 용량 제한으로 인해 AI 모델 가중치 파일을 포함하지 않습니다.
+아래 Google Drive 링크에서 3개의 폴더를 내려받아 프로젝트 루트에 배치해야 합니다.
+
+다운로드 링크: https://drive.google.com/drive/folders/1ES59vdjTOlXB0Qmz4bv8z1l30RVKcYOo?usp=sharing
+
+### 배치 경로
+
+다운로드 후 프로젝트 루트 기준으로 다음과 같이 배치합니다.
+
+```
+SG_integration_002+003+007/
++-- checkpoints/
+|   +-- mobile_sam.pt            (SAM 세그멘테이션 - SFE 분석용)
+|   +-- v_sams_model.pth         (V-SAMS 표면 마감 분류 모델)
++-- models/
+|   +-- depth_anything_v2/
+|   |   +-- depth_anything_v2_vits.pth  (Depth-Anything-V2 깊이 추정 모델)
+|   +-- sam2/
+|       +-- sam2_hiera_small.pt         (SAM 2.1 세그멘테이션 - 3D 곡률용)
++-- vsams/
+    +-- data/
+        +-- visual_library.pth   (V-SAMS 시각 참조 라이브러리)
+```
+
+> vsams/data/ 폴더는 저장소에 이미 존재하지만, visual_library.pth 파일은 Google Drive의 vsams 폴더 안에서 별도로 내려받아 해당 경로에 직접 배치해야 합니다.
+
+가중치 파일이 모두 배치되지 않으면 앱 실행 시 모델 로드 단계에서 오류가 발생합니다.
+
 ## 실행 방법
 
 ### 1. 로컬 가상환경으로 구동 시
