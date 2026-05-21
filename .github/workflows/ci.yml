@@ -34,7 +34,7 @@ jobs:
     - name: Install Dependencies
       run: |
         # CI 빌드 속도 향상을 위해 PyTorch 및 대형 GPU 의존성은 CPU 버전으로 설치
-        pip install torch --index-url https://download.pytorch.org/whl/cpu
+        pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
         # SAM 2.1 등의 패키지 및 requirements.txt 의존성 설치
         pip install -r requirements.txt
 
