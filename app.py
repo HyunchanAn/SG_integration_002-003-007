@@ -68,16 +68,16 @@ st.set_page_config(
 # ---------------------------------------------------------------------------
 st.markdown("""
 <style>
-    /* ===== Design System: Professional Dark Instrument Panel ===== */
+    /* ===== Design System: Premium Glassmorphism & Touch Optimized ===== */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
     :root {
         --bg-primary: #0B1120;
         --bg-secondary: #111827;
-        --bg-card: #1A2332;
-        --bg-card-hover: #1E2A3A;
-        --border-default: #1E3A5F;
-        --border-accent: #2563EB;
+        --bg-card: rgba(26, 35, 50, 0.65);
+        --bg-card-hover: rgba(30, 42, 58, 0.8);
+        --border-default: rgba(30, 58, 95, 0.6);
+        --border-accent: rgba(37, 99, 235, 0.8);
         --text-primary: #F1F5F9;
         --text-secondary: #94A3B8;
         --text-muted: #64748B;
@@ -86,13 +86,23 @@ st.markdown("""
         --accent-emerald: #10B981;
         --accent-amber: #F59E0B;
         --accent-violet: #8B5CF6;
-        --gradient-primary: linear-gradient(135deg, #1E3A5F 0%, #0B1120 100%);
+        --gradient-primary: linear-gradient(135deg, rgba(30,58,95,0.4) 0%, rgba(11,17,32,0.6) 100%);
         --gradient-accent: linear-gradient(135deg, #2563EB 0%, #7C3AED 100%);
-        --shadow-card: 0 4px 24px rgba(0,0,0,.35);
-        --shadow-hover: 0 8px 32px rgba(37,99,235,.15);
-        --radius-sm: 8px;
-        --radius-md: 12px;
-        --radius-lg: 16px;
+        --shadow-card: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        --radius-sm: 10px;
+        --radius-md: 16px;
+        --radius-lg: 20px;
+        --glass-blur: blur(12px);
+    }
+
+    /* ===== Animations ===== */
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    
+    .stApp {
+        animation: fadeIn 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
     }
 
     /* ===== Global Typography ===== */
@@ -103,7 +113,7 @@ st.markdown("""
     }
     .main .block-container {
         padding-top: 1.5rem;
-        padding-bottom: 2rem;
+        padding-bottom: 3rem;
         max-width: 960px;
     }
 
@@ -128,24 +138,25 @@ st.markdown("""
         letter-spacing: 0.02em;
     }
 
-    /* ===== Expander (Accordion Cards) ===== */
+    /* ===== Expander (Accordion Cards) - Glassmorphism ===== */
     [data-testid="stExpander"] {
         background: var(--bg-card);
+        backdrop-filter: var(--glass-blur);
+        -webkit-backdrop-filter: var(--glass-blur);
         border: 1px solid var(--border-default);
         border-radius: var(--radius-lg) !important;
-        margin-bottom: 12px;
+        margin-bottom: 16px;
         overflow: hidden;
         box-shadow: var(--shadow-card);
-        transition: border-color .2s, box-shadow .2s;
+        transition: border-color .3s ease, background .3s ease;
     }
-    [data-testid="stExpander"]:hover {
-        border-color: var(--border-accent);
-        box-shadow: var(--shadow-hover);
+    [data-testid="stExpander"] summary {
+        padding: 16px 20px !important;
     }
     [data-testid="stExpander"] summary,
     [data-testid="stExpander"] [data-testid="stExpanderToggleDetails"] {
         font-weight: 600 !important;
-        font-size: 15px !important;
+        font-size: 16px !important;
         color: var(--text-primary) !important;
         letter-spacing: -0.01em;
     }
@@ -156,112 +167,121 @@ st.markdown("""
     /* ===== Metric Card ===== */
     .metric-card {
         background: var(--gradient-primary);
+        backdrop-filter: var(--glass-blur);
+        -webkit-backdrop-filter: var(--glass-blur);
         border: 1px solid var(--border-default);
-        padding: 20px 14px;
+        padding: 24px 16px;
         border-radius: var(--radius-md);
         text-align: center;
-        transition: transform .2s cubic-bezier(.4,0,.2,1), box-shadow .2s, border-color .2s;
         position: relative;
         overflow: hidden;
+        box-shadow: var(--shadow-card);
     }
     .metric-card::before {
         content: '';
         position: absolute;
         top: 0; left: 0; right: 0;
-        height: 3px;
+        height: 4px;
         background: var(--gradient-accent);
         border-radius: var(--radius-md) var(--radius-md) 0 0;
     }
-    .metric-card:hover {
-        transform: translateY(-3px);
-        box-shadow: var(--shadow-hover);
-        border-color: var(--border-accent);
-    }
     .mv {
         font-family: 'JetBrains Mono', monospace;
-        font-size: 22px;
+        font-size: 24px;
         font-weight: 700;
         color: #60A5FA;
         letter-spacing: -0.02em;
     }
     .ml {
-        font-size: 11px;
+        font-size: 12px;
         color: var(--text-muted);
-        margin-top: 6px;
-        font-weight: 500;
+        margin-top: 8px;
+        font-weight: 600;
         text-transform: uppercase;
-        letter-spacing: 0.06em;
+        letter-spacing: 0.05em;
     }
 
-    /* ===== Buttons ===== */
+    /* ===== Buttons - Touch Optimized ===== */
     .stButton > button {
         background: var(--gradient-accent) !important;
         color: white !important;
         border: none !important;
         border-radius: var(--radius-sm) !important;
         font-weight: 600 !important;
-        font-size: 14px !important;
-        padding: 10px 20px !important;
-        transition: opacity .2s, transform .15s !important;
+        font-size: 15px !important;
+        min-height: 48px !important; /* Touch target */
+        padding: 0 24px !important;
+        transition: transform .1s cubic-bezier(0.4, 0, 0.2, 1), opacity .2s !important;
         letter-spacing: 0.01em;
+        width: 100%;
     }
-    .stButton > button:hover {
-        opacity: 0.9;
-        transform: translateY(-1px);
+    .stButton > button:active {
+        transform: scale(0.96);
+        opacity: 0.8;
     }
     .stButton > button[kind="secondary"],
     .stDownloadButton > button {
-        background: transparent !important;
+        background: rgba(255,255,255,0.05) !important;
+        backdrop-filter: var(--glass-blur);
         border: 1px solid var(--border-default) !important;
         color: var(--text-primary) !important;
+        min-height: 48px !important;
+        width: 100%;
     }
-    .stDownloadButton > button:hover {
+    .stDownloadButton > button:active {
+        background: rgba(37,99,235,.15) !important;
         border-color: var(--border-accent) !important;
-        background: rgba(37,99,235,.08) !important;
     }
 
-    /* ===== Input Widgets ===== */
+    /* ===== Input Widgets - Touch Optimized ===== */
     [data-testid="stNumberInput"] input,
     [data-testid="stTextInput"] input,
     .stSelectbox [data-baseweb="select"],
     .stMultiSelect [data-baseweb="select"] {
-        background-color: var(--bg-secondary) !important;
+        background-color: rgba(17, 24, 39, 0.7) !important;
+        backdrop-filter: var(--glass-blur);
         color: var(--text-primary) !important;
-        border-color: var(--border-default) !important;
+        border: 1px solid var(--border-default) !important;
         border-radius: var(--radius-sm) !important;
+        min-height: 48px !important;
+        font-size: 15px !important;
     }
     [data-testid="stNumberInput"] input:focus,
-    [data-testid="stTextInput"] input:focus {
-        border-color: var(--border-accent) !important;
-        box-shadow: 0 0 0 2px rgba(37,99,235,.2) !important;
+    [data-testid="stTextInput"] input:focus,
+    .stSelectbox [data-baseweb="select"]:focus-within {
+        border-color: var(--accent-blue) !important;
+        box-shadow: 0 0 0 2px rgba(37,99,235,.25) !important;
     }
 
     /* ===== Slider ===== */
     .stSlider [data-baseweb="slider"] [role="slider"] {
         background-color: var(--accent-blue) !important;
+        width: 24px !important;
+        height: 24px !important;
     }
 
     /* ===== File Uploader ===== */
     [data-testid="stFileUploader"] {
-        background: var(--bg-secondary);
+        background: rgba(17, 24, 39, 0.5);
+        backdrop-filter: var(--glass-blur);
         border: 1px dashed var(--border-default);
         border-radius: var(--radius-md);
-        padding: 8px;
+        padding: 16px;
+        transition: border-color .2s;
     }
-    [data-testid="stFileUploader"]:hover {
+    [data-testid="stFileUploader"]:active {
         border-color: var(--accent-blue);
+        background: rgba(37,99,235,.05);
     }
 
-    /* ===== Radio ===== */
-    [data-testid="stRadio"] label {
+    /* ===== Radio & Checkbox ===== */
+    [data-testid="stRadio"] label, [data-testid="stCheckbox"] label {
         color: var(--text-secondary) !important;
+        min-height: 32px;
+        display: flex;
+        align-items: center;
     }
-
-    /* ===== Checkbox ===== */
-    [data-testid="stCheckbox"] label span {
-        color: var(--text-secondary) !important;
-    }
-
+    
     /* ===== Dataframe ===== */
     [data-testid="stDataFrame"] {
         border-radius: var(--radius-md);
@@ -272,36 +292,35 @@ st.markdown("""
     hr {
         border-color: var(--border-default) !important;
         opacity: 0.5;
+        margin: 24px 0;
     }
 
-    /* ===== Info / Success / Error Boxes ===== */
-    .stAlert {
-        border-radius: var(--radius-sm) !important;
-        font-size: 13px !important;
-    }
-
-    /* ===== Section Labels (####) inside expanders ===== */
+    /* ===== Section Labels inside expanders ===== */
     [data-testid="stExpander"] h4 {
-        font-size: 15px !important;
+        font-size: 16px !important;
         color: var(--accent-cyan) !important;
-        border-bottom: 1px solid var(--border-default);
-        padding-bottom: 8px;
-        margin-bottom: 12px;
+        border-bottom: 1px solid rgba(255,255,255,0.05);
+        padding-bottom: 10px;
+        margin-bottom: 16px;
     }
 
-    /* ===== Scrollbar (Webkit) ===== */
-    ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-track { background: var(--bg-primary); }
-    ::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
-
-    /* ===== Mobile Responsive ===== */
+    /* ===== Mobile Responsive Override ===== */
     @media (max-width: 768px) {
-        .main .block-container { padding-left: 0.8rem; padding-right: 0.8rem; }
-        h1 { font-size: 1.4rem !important; }
-        .mv { font-size: 18px; }
-        .ml { font-size: 10px; }
-        .metric-card { padding: 14px 10px; }
+        .main .block-container { 
+            padding-left: 16px; 
+            padding-right: 16px; 
+        }
+        h1 { font-size: 1.5rem !important; }
+        .mv { font-size: 20px; }
+        .ml { font-size: 11px; }
+        .metric-card { padding: 20px 14px; }
+        
+        [data-testid="column"] {
+            width: 100% !important;
+            flex: 1 1 100% !important;
+            min-width: 100% !important;
+            margin-bottom: 12px;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -310,6 +329,8 @@ st.markdown("""
 # Session State 초기화
 # ---------------------------------------------------------------------------
 _defaults = {
+    "vol_ul": 200.0,
+    "coin_d": 24.0,
     "sfe_results": {},        # {liquid_key: {"ca":..., "d_mm":..., ...}}
     "sfe_calc_result": None,  # OWRK 연산 결과
     "m_list": [],             # SFE 테이블 리스트
@@ -343,6 +364,7 @@ _T = {
         "volume": "액적 부피 (uL)",
         "coin_d": "동전 직경 (mm)",
         "sigma": "곡률 평활화 sigma",
+        "sigma_help": "3D 지형(Depth) 복원 시 노이즈를 억제하는 필터 강도입니다. 값이 클수록 표면이 부드럽게 해석되어 전반적인 휘어짐을 파악하기 좋고, 작을수록 미세한 찍힘이 그대로 반영됩니다.",
         "ref_len": "캘리브레이션 길이 (mm)",
         "loading": "모델 가중치를 로드하는 중입니다...",
         "no_img": "상단 설정 영역에서 이미지를 업로드해 주세요.",
@@ -426,11 +448,23 @@ with st.expander("STEP 1.  설정 및 이미지 등록" if lang == "ko" else "ST
     st.markdown("##### " + T["params"])
     col_p1, col_p2 = st.columns(2)
     with col_p1:
-        vol_ul = st.number_input(T["volume"], 0.1, 1000.0, 200.0, 1.0)
-        coin_d = st.number_input(T["coin_d"], 1.0, 100.0, 24.0, 0.5)
+        def update_vol():
+            if st.session_state.vol_preset:
+                st.session_state.vol_ul = float(st.session_state.vol_preset)
+
+        vol_ul = st.number_input(T["volume"], 0.1, 1000.0, key="vol_ul", step=1.0)
+        st.pills("Preset", ["20", "50", "100", "200", "500"], key="vol_preset", on_change=update_vol, label_visibility="collapsed")
+        
     with col_p2:
-        sigma_v = st.slider(T["sigma"], 0.5, 5.0, 2.0, 0.1)
-        ref_len = st.number_input(T["ref_len"], 1.0, 5000.0, 100.0, 1.0)
+        def update_coin():
+            if st.session_state.coin_preset:
+                labels = ["10원", "50원", "100원", "500원"]
+                vals = [18.0, 21.6, 24.0, 26.5]
+                idx = labels.index(st.session_state.coin_preset)
+                st.session_state.coin_d = vals[idx]
+
+        coin_d = st.number_input(T["coin_d"], 1.0, 100.0, key="coin_d", step=0.5)
+        st.pills("Coin", ["10원", "50원", "100원", "500원"], key="coin_preset", on_change=update_coin, label_visibility="collapsed")
 
     st.markdown("---")
 
@@ -518,6 +552,17 @@ with st.expander("STEP 1.  설정 및 이미지 등록" if lang == "ko" else "ST
     f_nonpolar = _uploaded.get("f_nonpolar")
     f_finish = _uploaded.get("f_finish")
     f_3d = _uploaded.get("f_3d") if do_3d else None
+
+    sigma_v = 2.0
+    ref_len = 100.0
+    if do_3d:
+        st.markdown("---")
+        st.markdown("##### 3D 곡률 세부 매개변수" if lang == "ko" else "##### 3D Curvature Parameters")
+        c_3d1, c_3d2 = st.columns(2)
+        with c_3d1:
+            sigma_v = st.slider(T["sigma"], 0.5, 5.0, 2.0, 0.1, help=T.get("sigma_help", ""))
+        with c_3d2:
+            ref_len = st.number_input(T["ref_len"], 1.0, 5000.0, 100.0, 1.0, help=T.get("ref_len_help", ""))
 
 # ---------------------------------------------------------------------------
 # Model 캐싱 로드

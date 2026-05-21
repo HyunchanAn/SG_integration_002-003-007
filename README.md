@@ -1,5 +1,9 @@
 # 통합 표면 분석 플랫폼 (Integrated Surface Analysis Platform)
 
+![Status](https://img.shields.io/badge/Status-v1.0%20Release-brightgreen) ![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![Backend](https://img.shields.io/badge/Backend-Physics%20%26%20AI-red) ![UI](https://img.shields.io/badge/UI-Streamlit-orange)
+
+라이브 데모 배포 주소: [https://sg-integration-2-3-7.streamlit.app/](https://sg-integration-2-3-7.streamlit.app/)
+
 본 프로젝트는 표면 자유 에너지(SFE) 분석, 표면 마감 상태(조도/광택도) 평가, 3D 지형 및 곡률 분석 기능을 하나의 인터페이스로 제공하는 통합 제어 솔루션입니다.
 
 ## 아키텍처 및 구성
@@ -49,12 +53,21 @@ SG_integration_002+003+007/
 
 ## 실행 방법
 
-### 1. 로컬 가상환경으로 구동 시
+### 1. 로컬 환경으로 구동 시
 
-기존에 구성된 SG_proj_002의 가상환경(.venv)을 참조하여 필수 패키지를 아래와 같이 설치하고 실행할 수 있습니다.
+프로젝트 루트 디렉토리에서 가상환경을 생성 및 활성화한 후, 필수 패키지를 설치하고 실행합니다.
 
-실행 명령어:
-E:\Github\SG_proj_002\.venv\Scripts\streamlit run app.py
+```bash
+# 가상환경 생성 및 활성화 (Windows)
+python -m venv .venv
+.venv\Scripts\activate
+
+# 패키지 설치
+pip install -r requirements.txt
+
+# 앱 실행
+streamlit run app.py
+```
 
 ### 2. Docker를 이용한 컨테이너 구동 시
 
