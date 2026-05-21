@@ -1,0 +1,69 @@
+[
+  {
+    "id": "PF-101",
+    "name": "Standard-PE-LowTack",
+    "description": "Low-tack protective film for smooth metal surfaces",
+    "specs": {
+      "base_material": "PE",
+      "adhesive": "Acrylic",
+      "tack_force": "50 gf/25mm"
+    },
+    "target_condition": {
+      "material_category": [
+        "Metal",
+        "Glass"
+      ],
+      "finish_type": [
+        "Mirror",
+        "Glossy"
+      ],
+      "risk_residue": "Low"
+    },
+    "image_url": "images/pf_101_sample.png"
+  },
+  {
+    "id": "PF-305",
+    "name": "High-Adhesion-Rough",
+    "description": "High-tack film for rough surfaces and sandblast finishes",
+    "specs": {
+      "base_material": "LDPE",
+      "adhesive": "Rubber",
+      "tack_force": "350 gf/25mm"
+    },
+    "target_condition": {
+      "material_category": [
+        "Metal",
+        "Plastic"
+      ],
+      "finish_type": [
+        "Rough",
+        "Sandblast",
+        "Hairline"
+      ],
+      "risk_residue": "Medium"
+    },
+    "image_url": "images/pf_305_sample.png"
+  },
+  {
+    "id": "PF-500-UV",
+    "name": "UV-Cut-Coated",
+    "description": "Special film for long-term storage and painted surface protection",
+    "specs": {
+      "base_material": "PET",
+      "adhesive": "Silicone",
+      "tack_force": "10 gf/25mm"
+    },
+    "target_condition": {
+      "material_category": [
+        "Painted",
+        "Plastic"
+      ],
+      "finish_type": [
+        "Glossy",
+        "Matte"
+      ],
+      "risk_residue": "High"
+    },
+    "image_url": "images/pf_500_sample.jpg"
+  }
+]
