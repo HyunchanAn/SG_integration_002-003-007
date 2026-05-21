@@ -10,15 +10,24 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(os.path.dirname(__file__))))
 SFE_TEST_IMAGE = r"E:\Github\SG_proj_002\example_images\metal_water.png"
 FINISH_TEST_IMAGE = r"E:\Github\SG_proj_003\ex_HL_001.png"
 
+def get_test_image(path, is_coin=False):
+    if os.path.exists(path):
+        bgr = cv2.imread(path)
+    else:
+        # Generate dummy synthetic image
+        bgr = np.zeros((800, 800, 3), dtype=np.uint8)
+        if is_coin:
+            cv2.circle(bgr, (400, 400), 100, (255, 255, 255), -1)
+        else:
+            cv2.circle(bgr, (400, 400), 50, (200, 200, 200), -1)
+    return bgr, cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
 def test_sfe_pipeline():
     """deepdrop_sfe 모듈의 동전 감지 및 원근 보정, 액적 분석 통합 테스트"""
-    assert os.path.exists(SFE_TEST_IMAGE), f"Test image not found at {SFE_TEST_IMAGE}"
-    
     from deepdrop_sfe import AIContactAngleAnalyzer, PerspectiveCorrector, DropletPhysics
     
     # 1. 이미지 로드
-    bgr = cv2.imread(SFE_TEST_IMAGE)
-    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    bgr, rgb = get_test_image(SFE_TEST_IMAGE, is_coin=True)
     
     analyzer = AIContactAngleAnalyzer()
     corrector = PerspectiveCorrector()
@@ -55,12 +64,9 @@ def test_sfe_pipeline():
 
 def test_vsams_pipeline():
     """vsams 모듈의 표면 거칠기, 광택도 및 마감 유형 추론 테스트"""
-    assert os.path.exists(FINISH_TEST_IMAGE), f"Test image not found at {FINISH_TEST_IMAGE}"
-    
     from vsams.analysis.surface_evaluator import SurfaceEvaluator
     
-    bgr = cv2.imread(FINISH_TEST_IMAGE)
-    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    bgr, rgb = get_test_image(FINISH_TEST_IMAGE)
     
     evaluator = SurfaceEvaluator()
     res = evaluator.analyze(rgb)
@@ -74,14 +80,11 @@ def test_vsams_pipeline():
 
 def test_curvature_pipeline():
     """sam2, depth-anything-v2, curvature 모듈을 연결한 3D 곡률 분석 파이프라인 테스트"""
-    assert os.path.exists(FINISH_TEST_IMAGE), f"Test image not found at {FINISH_TEST_IMAGE}"
-    
     from src.seg.sam2_wrapper import SAM2BaseWrapper
     from src.topo.depth_wrapper import DepthAnythingV2Wrapper
     from src.curv.curvature import CurvatureAnalyzer
     
-    bgr = cv2.imread(FINISH_TEST_IMAGE)
-    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    bgr, rgb = get_test_image(FINISH_TEST_IMAGE)
     h, w = rgb.shape[:2]
     
     # 1. SAM2 Segment

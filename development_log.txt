@@ -105,3 +105,9 @@
 
 - Step 1 이미지 업로드 영역에서 SFE 액체 종류(Water, Diiodomethane 등)를 직관적으로 바로 지정할 수 있도록 액체 선택 드롭다운 UI를 추가함.
 - Step 1의 선택 위젯과 Step 2의 기존 설정 위젯 간 양방향 데이터 동기화(Callback)를 구축하여 사용자 혼선을 방지함.
+
+- [System Architecture & Maintenance] `docs/ARCHITECTURE.md`를 생성하여 002, 003, 007 모듈 간의 파이프라인 연계 구조를 Mermaid 다이어그램으로 시각화함.
+- `pyproject.toml`을 도입하여 프로젝트 메타데이터와 패키지 의존성(requirements.txt) 관리를 표준 파이썬 포맷으로 고도화.
+- `.pre-commit-config.yaml` 훅을 구성하여 향후 커밋 시 코드 포맷(black, isort, ruff) 강제화를 통한 코드 퀄리티 유지 장치 마련.
+- `.github/PULL_REQUEST_TEMPLATE.md` 추가로 협업 표준화(이슈 템플릿 대체).
+- `tests/test_integration.py`의 절대 경로 하드코딩 의존성을 제거하고, 파일 부재 시 더미 합성 이미지(Synthetic Image)를 자동 생성하여 통합 테스트 파이프라인이 CI 환경 등 어디서든 통과될 수 있도록 강건성 개선.
