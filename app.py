@@ -534,6 +534,24 @@ with st.expander("STEP 1.  설정 및 이미지 등록" if lang == "ko" else "ST
         </div>
         """, unsafe_allow_html=True)
 
+        if slot["var"] in ["f_polar", "f_nonpolar"]:
+            from deepdrop_sfe.physics_engine import DropletPhysics as _DP
+            _liq_names = list(_DP.LIQUID_DATA.keys())
+            idx = 0 if slot["var"] == "f_polar" else 1
+            
+            def _sync_liq(var_name=slot["var"]):
+                up_key = f"chem_{var_name}_up"
+                target_key = "chem_liquid_1" if var_name == "f_polar" else "chem_liquid_2"
+                st.session_state[target_key] = st.session_state[up_key]
+                
+            st.selectbox(
+                "시약 종류", _liq_names, index=idx, 
+                key=f"chem_{slot['var']}_up", 
+                on_change=_sync_liq, kwargs={"var_name": slot["var"]},
+                label_visibility="collapsed"
+            )
+            st.markdown("<div style='margin-bottom:8px;'></div>", unsafe_allow_html=True)
+
         if use_camera:
             _uploaded[slot["var"]] = st.camera_input(
                 slot["label"],
@@ -657,11 +675,17 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
         # 액체 종류 선택 (사용자가 자유 지정)
         default_idx_1 = 0   # Water(DI)
         default_idx_2 = 1   # Diiodomethane
+        
+        def _sync_back(l_key=liq_key):
+            up_key = "chem_f_polar_up" if l_key == "liquid_1" else "chem_f_nonpolar_up"
+            st.session_state[up_key] = st.session_state[f"chem_{l_key}"]
+
         chem_name = st.selectbox(
             "사용 시약" if lang == "ko" else "Reagent",
             _liquid_names,
             index=default_idx_1 if liq_key == "liquid_1" else default_idx_2,
             key=f"chem_{liq_key}",
+            on_change=_sync_back, kwargs={"l_key": liq_key}
         )
 
         bgr, rgb = _load_img(active_file)
