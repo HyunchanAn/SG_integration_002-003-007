@@ -205,7 +205,6 @@ st.markdown("""
         color: var(--text-muted);
         margin-top: 8px;
         font-weight: 600;
-        text-transform: uppercase;
         letter-spacing: 0.05em;
     }
 
@@ -971,7 +970,18 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                             st.image(warped, caption="Top-View", width="stretch")
                         with col_w2:
                             with st.spinner("Detecting droplet..."):
-                                drop_box = sfe_analyzer.auto_detect_droplet_candidate(warped)
+                                # 원근 보정 후 계산된 동전의 새로운 좌표계를 바탕으로 exclude_box를 구성
+                                if coin_info is not None:
+                                    ccx, ccy, ccr = coin_info
+                                    exclude_box_warped = [
+                                        max(0, ccx - ccr),
+                                        max(0, ccy - ccr),
+                                        ccx + ccr,
+                                        ccy + ccr
+                                    ]
+                                    drop_box = sfe_analyzer.auto_detect_droplet_candidate(warped, exclude_box=exclude_box_warped, coin_radius=ccr)
+                                else:
+                                    drop_box = sfe_analyzer.auto_detect_droplet_candidate(warped)
                             if drop_box is not None:
                                 dprev = warped.copy()
                                 # 자동 감지 모드에서도 마스크 실시간 오버레이
@@ -1008,6 +1018,7 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                             "접촉각 분석 실행" if lang == "ko" else "Analyze Contact Angle",
                             key=f"btn_ca_{liq_key}", type="primary", width="stretch",
                         ):
+                            start_time = time.time()
                             sfe_analyzer.set_image(warped)
                             if manual_droplet:
                                 pt_coords = np.array([[dcx_input, dcy_input]])
@@ -1019,10 +1030,13 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                             px_mm = DropletPhysics.calculate_pixels_per_mm(coin_info[2], coin_d)
                             d_mm = DropletPhysics.calculate_contact_diameter(d_mask, px_mm)
                             ca_val = DropletPhysics.calculate_contact_angle(vol_ul, d_mm)
+                            
+                            inference_time = time.time() - start_time
 
                             st.session_state["sfe_results"][liq_key] = {
                                 "ca": ca_val, "d_mm": d_mm, "px_mm": px_mm,
                                 "liquid": chem_name,
+                                "time": inference_time,
                             }
 
                     # --- 결과 표시 ---
@@ -1030,10 +1044,11 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                         res = st.session_state["sfe_results"][liq_key]
                         st.markdown("---")
                         st.markdown("#### 3. 측정 결과" if lang == "ko" else "#### 3. Measurement Result")
-                        c1, c2, c3 = st.columns(3)
+                        c1, c2, c3, c4 = st.columns(4)
                         with c1: _card(f"{res['px_mm']:.1f} px/mm", "Pixel Scale")
                         with c2: _card(f"{res['d_mm']:.3f} mm", "Contact Diameter")
                         with c3: _card(f"{res['ca']:.1f}\u00b0", "Contact Angle")
+                        with c4: _card(f"{res.get('time', 0):.2f} s", "Inference Time" if lang == "en" else "추론 시간")
                         st.pyplot(_droplet_plot(res["ca"]))
 
                         # SFE 테이블에 추가
@@ -1047,6 +1062,7 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                                         "Liquid": res["liquid"],
                                         "Angle": round(res["ca"], 2),
                                         "Volume": vol_ul,
+                                        "Inf. Time (s)": round(res.get("time", 0), 2),
                                     })
                                     st.success("추가 완료" if lang == "ko" else "Added")
                                 else:
@@ -1055,6 +1071,7 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                                         if m["Liquid"] == res["liquid"]:
                                             m["Angle"] = round(res["ca"], 2)
                                             m["Volume"] = vol_ul
+                                            m["Inf. Time (s)"] = round(res.get("time", 0), 2)
                                     st.info("기존 측정값이 갱신되었습니다." if lang == "ko" else "Existing measurement updated.")
                         with b2:
                             if st.button("테이블 초기화" if lang == "ko" else "Clear table",
@@ -1098,15 +1115,27 @@ with st.expander("STEP 3.  " + T["tab2"], expanded=False):
         st.info(T["no_img"])
     else:
         bgr_f, rgb_f = _load_img(f_finish)
+        
+        # UI 렌더링 최적화: 고해상도 이미지를 그대로 st.image에 넘기면 브라우저 인코딩 병목(Hang)이 발생함
+        # 화면 표시용(display) 해상도는 최대 800px로 축소하여 렌더링
+        disp_rgb = rgb_f.copy()
+        if max(disp_rgb.shape[:2]) > 800:
+            scale_disp = 800.0 / max(disp_rgb.shape[:2])
+            disp_rgb = cv2.resize(disp_rgb, (int(disp_rgb.shape[1] * scale_disp), int(disp_rgb.shape[0] * scale_disp)), interpolation=cv2.INTER_AREA)
+
         col_a, col_b = st.columns(2)
         with col_a:
-            st.image(rgb_f, caption="Input Image", width="stretch")
+            st.image(disp_rgb, caption="Input Image", width="stretch")
         with col_b:
             with st.spinner("Analyzing surface..."):
                 ev = vsams_eval.analyze(rgb_f)
             if "error" not in ev:
                 st.session_state["v_sams_result"] = ev
                 overlay = vsams_eval.get_overlay_image(rgb_f.copy(), ev)
+                
+                # 오버레이 이미지(PIL)도 렌더링을 위해 리사이즈
+                if max(overlay.size) > 800:
+                    overlay.thumbnail((800, 800))
                 st.image(overlay, caption="Analysis Overlay", width="stretch")
             else:
                 st.error(ev["error"])
@@ -1115,8 +1144,8 @@ with st.expander("STEP 3.  " + T["tab2"], expanded=False):
             vr = st.session_state["v_sams_result"]
             st.markdown("---")
             c1, c2, c3 = st.columns(3)
-            with c1: _card(f"Ra = {vr['roughness']:.4f}", "조도 (Roughness)" if lang == "ko" else "Roughness")
-            with c2: _card(f"{vr['gloss']:.1f} %", "광택도 (Gloss)" if lang == "ko" else "Gloss")
+            with c1: _card(f"{vr['roughness']:.4f} μm", "조도 (Ra)" if lang == "ko" else "Roughness (Ra)")
+            with c2: _card(f"{vr['gloss']:.1f} GU", "광택도 (Gloss)" if lang == "ko" else "Gloss Unit")
             with c3: _card(vr["predicted_label"], "마감 분류" if lang == "ko" else "Finish Class")
 
 # =========================================================================
@@ -1302,6 +1331,14 @@ with st.expander("STEP 5.  " + T["tab4"], expanded=False):
         st.info(T["no_data"])
     else:
         rows = {}
+        total_inf_time = 0.0
+        
+        # SFE 결과에서 추론 시간 합산
+        m_list = st.session_state.get("m_list", [])
+        if m_list:
+            for m in m_list:
+                total_inf_time += float(m.get("Inf. Time (s)", 0.0))
+
         if sfe_c:
             rows["Total SFE (mN/m)"] = round(sfe_c["total"], 3)
             rows["Dispersive (mN/m)"] = round(sfe_c["disp"], 3)
@@ -1313,6 +1350,9 @@ with st.expander("STEP 5.  " + T["tab4"], expanded=False):
         if cv_r:
             rows["Max Gaussian K"] = round(cv_r["max_k"], 5)
             rows["Min Radius R (mm)"] = cv_r["min_r_mm"]
+            
+        if total_inf_time > 0:
+            rows["Total AI Inference Time (s)"] = round(total_inf_time, 3)
 
         df = pd.DataFrame(list(rows.items()), columns=["Parameter", "Value"])
         st.dataframe(df, width="stretch", hide_index=True)

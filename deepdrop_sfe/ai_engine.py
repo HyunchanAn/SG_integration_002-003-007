@@ -26,16 +26,14 @@ class AIContactAngleAnalyzer:
 
         # 2. 모델 아이디 결정 (하드웨어 및 환경에 따른 자동 선택)
         if model_id is None:
-            # CUDA 인 경우 고사양으로 간주하여 Large 사용 (RTX 5080 대응)
+            # CUDA 인 경우에도 추론 속도 극대화를 위해 기본 모델을 small 로 변경
             if self.device == "cuda":
-                model_id = "facebook/sam2.1-hiera-large"
-            # MPS(macOS)나 CPU인 경우 메모리 효율을 위해 Tiny 혹은 Base 사용 검토
-            # 사용자의 요청에 따라 저사양/클라우드 환경 대응을 위해 기본적으로 Tiny 모델 로직 도입
+                model_id = "facebook/sam2.1-hiera-small"
+            # MPS(macOS)나 CPU인 경우 메모리 효율을 위해 Tiny 사용
             elif self.device == "cpu":
                 model_id = "facebook/sam2.1-hiera-tiny"
             else:
-                # MPS 등 기타 가속 환경에서는 기본적으로 Large 사용 시도
-                model_id = "facebook/sam2.1-hiera-large"
+                model_id = "facebook/sam2.1-hiera-small"
 
         if self.device == "cuda":
             gpu_name = torch.cuda.get_device_name(0)
@@ -72,8 +70,8 @@ class AIContactAngleAnalyzer:
         h_orig, w_orig = image_rgb.shape[:2]
         self.orig_size = (h_orig, w_orig)
 
-        # 성능 최적화: 1024px를 초과하는 고해상도는 리사이징하여 추론 속도 개선
-        self.target_size = 1024
+        # 성능 최적화: 640px를 초과하는 고해상도는 리사이징하여 추론 속도 대폭 개선
+        self.target_size = 640
         if max(h_orig, w_orig) > self.target_size:
             scale = self.target_size / float(max(h_orig, w_orig))
             new_h, new_w = int(h_orig * scale), int(w_orig * scale)
@@ -122,139 +120,212 @@ class AIContactAngleAnalyzer:
 
     def auto_detect_coin_candidate(self, image_cv2):
         """
-        [V2] 원주 우선(Rim-first) 전략을 사용하여 동전을 감지하고 하이브리드 프롬프트를 생성함.
+        [V2] V-SAMS에서 검증된 강건한 허프 변환(HoughCircles) 및 CLAHE 알고리즘을 사용하여 동전을 감지함.
         """
-        h, w = image_cv2.shape[:2]
-        gray = cv2.cvtColor(image_cv2, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (7, 7), 0)
+        orig_h, orig_w = image_cv2.shape[:2]
+        max_dim = 800.0
+        scale = 1.0
+        
+        # Optimization: Downsample if image is too large
+        if max(orig_h, orig_w) > max_dim:
+            scale = max_dim / float(max(orig_h, orig_w))
+            new_w = int(orig_w * scale)
+            new_h = int(orig_h * scale)
+            work_img = cv2.resize(image_cv2, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        else:
+            work_img = image_cv2
 
-        candidates = []
-        img_area = h * w
+        h, w = work_img.shape[:2]
+        gray = cv2.cvtColor(work_img, cv2.COLOR_BGR2GRAY)
 
-        def process_contours(binary_img, method_name):
-            cnts, _ = cv2.findContours(binary_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            for cnt in cnts:
-                area = cv2.contourArea(cnt)
-                area_ratio = area / img_area
-                if area_ratio < 0.0005 or area_ratio > 0.40:
-                    continue
+        # Preprocessing: Maximize contrast using CLAHE and median blur
+        clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
+        gray_pre = clahe.apply(gray)
+        gray_pre = cv2.medianBlur(gray_pre, 7)
 
-                hull = cv2.convexHull(cnt)
-                hull_area = cv2.contourArea(hull)
-                if hull_area == 0:
-                    continue
-
-                solidity = float(area) / hull_area
-                peri = cv2.arcLength(hull, True)
-                circularity = 4 * np.pi * hull_area / (peri * peri) if peri > 0 else 0
-
-                if len(hull) >= 5:
-                    ellipse = cv2.fitEllipse(hull)
-                    (xc, yc), (d1, d2), angle = ellipse
-                    ar = max(d1, d2) / (min(d1, d2) + 1e-6)
-                else:
-                    ar = 100
-
-                if solidity < 0.70 or ar > 4.0 or circularity < 0.4:
-                    continue
-
-                # 중앙부 우선 및 크기 기중치 패널티 보완
-                dist_from_center = np.sqrt((xc - w / 2) ** 2 + (yc - h / 2) ** 2)
-                max_dist = np.sqrt((w / 2) ** 2 + (h / 2) ** 2)
-                center_score = 1.0 - (dist_from_center / (max_dist + 1e-6))
-                
-                # 면적 비율이 너무 작으면 패널티 부여 (동전은 미세한 먼지가 아님)
-                size_penalty = 1.0 if area_ratio >= 0.005 else (area_ratio / 0.005)
-
-                score = (circularity * 0.25) + (solidity * 0.25) + (center_score * 0.3) + (min(1.0, area_ratio / 0.05) * 0.2)
-                score *= size_penalty
-
-                x, y, bw, bh = cv2.boundingRect(hull)
-                candidates.append(
-                    {
-                        "box": [
-                            max(0, x - 5),
-                            max(0, y - 5),
-                            min(w, x + bw + 5),
-                            min(h, y + bh + 5),
-                        ],
-                        "score": score,
-                        "center": [int(xc), int(yc)],
-                    }
-                )
-
-        # 다중 이진화 전략
-        thresh_adapt = cv2.adaptiveThreshold(
-            blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 15, 3
+        circles = cv2.HoughCircles(
+            gray_pre,
+            cv2.HOUGH_GRADIENT,
+            dp=1.1,
+            minDist=w // 5,
+            param1=50,
+            param2=30,
+            minRadius=int(h * 0.05),
+            maxRadius=int(h * 0.25),
         )
-        process_contours(thresh_adapt, "Adaptive")
-        _, thresh_otsu = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        process_contours(thresh_otsu, "Otsu")
 
-        if not candidates:
-            return None, None
+        if circles is not None:
+            circles = np.around(circles[0, :]).astype(np.int32)
+            best_candidate = None
+            max_score = -1.0
 
-        best = max(candidates, key=lambda x: x["score"])
-        bx1, by1, bx2, by2 = best["box"]
+            for c in circles:
+                cx, cy, cr = c
+                if cx - cr < 0 or cx + cr >= w or cy - cr < 0 or cy + cr >= h:
+                    continue
 
-        # 하이브리드 프롬프트: 중앙 포인트 + 박스
-        points = np.array([[best["center"][0], best["center"][1]]])
-        labels = np.array([1])
-        box = np.array(best["box"])
+                # 1. Positional Score (Closer to center is higher)
+                dist_to_center = np.sqrt((cx - w / 2) ** 2 + (cy - h / 2) ** 2)
+                pos_score = 1.0 - (dist_to_center / (np.sqrt((w / 2) ** 2 + (h / 2) ** 2)))
 
-        return box, (float(best["center"][0]), float(best["center"][1]), float((bx2 - bx1) / 2))
+                # 2. Texture Complexity Score (Coin internal detail)
+                roi = gray[cy - cr : cy + cr, cx - cr : cx + cr]
+                texture_score = float(np.std(roi)) / 128.0
 
-    def auto_detect_droplet_candidate(self, image_cv2, exclude_box=None):
+                score = pos_score * 0.4 + texture_score * 0.6
+
+                if score > max_score:
+                    max_score = score
+                    best_candidate = c
+
+            if best_candidate is None:
+                best_candidate = circles[0]
+
+            x, y, r = best_candidate
+            pad = int(r * 0.1)
+
+            # Map coordinates back to original scale
+            inv_scale = 1.0 / scale
+            orig_x = int(x * inv_scale)
+            orig_y = int(y * inv_scale)
+            orig_r = int(r * inv_scale)
+            orig_pad = int(pad * inv_scale)
+
+            coin_box = [
+                max(0, orig_x - orig_r - orig_pad),
+                max(0, orig_y - orig_r - orig_pad),
+                min(orig_w, orig_x + orig_r + orig_pad),
+                min(orig_h, orig_y + orig_r + orig_pad),
+            ]
+            
+            box_arr = np.array(coin_box)
+            return box_arr, (float(orig_x), float(orig_y), float(orig_r))
+            
+        return None, None
+
+    def auto_detect_droplet_candidate(self, image_cv2, exclude_box=None, coin_radius=None):
         """
-        [V2] 금속 표면 및 투명 액적 최적화 탐지 로직 (하이브리드 프롬프트 대응).
+        [V4.1] 2B 금속 표면의 렌즈 효과(Lens Effect) 병합 알고리즘 파라미터 튜닝.
+        액적 내부의 조각난 렌즈 왜곡(스크래치 파편)들을 하나의 거대한 Blob으로 완전히 뭉치도록
+        형태학적 결합(Closing) 커널을 대폭 확대하고, 최소 반경 커트라인을 상향 조정.
         """
-        h, w = image_cv2.shape[:2]
-        b, g, r_ch = cv2.split(image_cv2)
-        gray = cv2.addWeighted(b, 0.6, g, 0.4, 0)  # 파란색 계열 강조 (난반사 억제)
-        smoothed = cv2.medianBlur(gray, 7)
-        blurred = cv2.GaussianBlur(smoothed, (9, 9), 0)
+        orig_h, orig_w = image_cv2.shape[:2]
+        max_dim = 600.0
+        scale = 1.0
 
-        edged = cv2.Canny(blurred, 20, 80)
-        thresh = cv2.adaptiveThreshold(
-            blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 25, 5
-        )
-        combined = cv2.bitwise_or(edged, thresh)
+        if max(orig_h, orig_w) > max_dim:
+            scale = max_dim / float(max(orig_h, orig_w))
+            new_w = int(orig_w * scale)
+            new_h = int(orig_h * scale)
+            work_img = cv2.resize(image_cv2, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        else:
+            work_img = image_cv2.copy()
 
+        h, w = work_img.shape[:2]
+        
+        # 기준 반지름 계산 (coin_radius가 있으면 적극 활용, 없으면 화면 10%)
+        ref_radius = (coin_radius * scale) if (coin_radius is not None and coin_radius > 0) else (h * 0.1)
+        
+        # 1. 제외 영역(동전)을 완전히 까맣게 마스킹
+        ex1, ey1, ex2, ey2 = -1, -1, -1, -1
         if exclude_box is not None:
-            ex1, ey1, ex2, ey2 = map(int, exclude_box)
-            combined[max(0, ey1 - 10) : min(h, ey2 + 10), max(0, ex1 - 10) : min(w, ex2 + 10)] = 0
-
-        cnts, _ = cv2.findContours(combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        valid_candidates = []
-        img_area = h * w
-
-        for cnt in cnts:
+            ex1 = int(exclude_box[0] * scale)
+            ey1 = int(exclude_box[1] * scale)
+            ex2 = int(exclude_box[2] * scale)
+            ey2 = int(exclude_box[3] * scale)
+            cv2.rectangle(work_img, (max(0, ex1), max(0, ey1)), (min(w, ex2), min(h, ey2)), (0, 0, 0), -1)
+            
+        # 2. 로컬 분산(Variance) 맵 기반 렌즈 효과 포착
+        b, g, r_ch = cv2.split(work_img)
+        gray = cv2.addWeighted(b, 0.7, g, 0.3, 0).astype(np.float32)
+        
+        # 블러 크기를 동전 반지름의 15% 수준으로 넉넉히 주어 파편화를 1차 방지
+        win_size = int(ref_radius * 0.15) | 1
+        if win_size < 3: win_size = 3
+        
+        mean_gray = cv2.blur(gray, (win_size, win_size))
+        mean_gray_sq = cv2.blur(gray**2.0, (win_size, win_size))
+        variance = mean_gray_sq - mean_gray**2.0
+        
+        stddev = np.sqrt(np.maximum(variance, 0))
+        stddev_norm = cv2.normalize(stddev, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        
+        # 3. 임계값을 통한 강한 렌즈 효과(대비 뭉침) 추출
+        _, thresh = cv2.threshold(stddev_norm, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        
+        # 4. 강력한 형태학적 닫힘(Morphological Closing) 연산으로 파편들 하나로 뭉치기
+        # 커널 크기를 동전 반지름의 30% 수준으로 대폭 키움 (파편들이 완전히 떡지도록)
+        kernel_size = int(ref_radius * 0.30) | 1
+        if kernel_size < 5: kernel_size = 5
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        
+        morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=3) # 반복 횟수도 증가
+        
+        # 너무 자잘한 노이즈만 날리는 가벼운 열림 연산
+        open_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        morph = cv2.morphologyEx(morph, cv2.MORPH_OPEN, open_kernel, iterations=1)
+        
+        # 5. 윤곽선(Blob) 검출
+        contours, _ = cv2.findContours(morph, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # 액적 최소 반경 커트라인 대폭 상향 (5% -> 20%)
+        min_r = ref_radius * 0.20
+        max_r = ref_radius * 0.80
+        
+        best_box = None
+        best_score = -1.0
+        
+        for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < 200 or area > img_area * 0.10:
+            if area < 50:
                 continue
-            peri = cv2.arcLength(cnt, True)
-            circularity = 4 * np.pi * area / (peri * peri) if peri > 0 else 0
-
-            if circularity > 0.3:
-                x, y, bw, bh = cv2.boundingRect(cnt)
-                valid_candidates.append(
-                    {
-                        "center": [int(x + bw / 2), int(y + bh / 2)],
-                        "box": [
-                            max(0, x - 5),
-                            max(0, y - 5),
-                            min(w, x + bw + 5),
-                            min(h, y + bh + 5),
-                        ],
-                        "score": circularity * (area / img_area),
-                    }
-                )
-
-        if not valid_candidates:
-            return None
-
-        best = max(valid_candidates, key=lambda x: x["score"])
-        return np.array(best["box"])
+                
+            r_est = np.sqrt(area / np.pi)
+            
+            if min_r <= r_est <= max_r:
+                x_b, y_b, bw, bh = cv2.boundingRect(cnt)
+                aspect_ratio = float(bw) / float(bh)
+                
+                # 물방울은 극단적으로 길쭉하지 않으므로 비율을 타이트하게 제한
+                if 0.5 <= aspect_ratio <= 2.0:
+                    cx = x_b + bw / 2.0
+                    cy = y_b + bh / 2.0
+                    
+                    # 마스킹된 동전 영역 근처는 무시
+                    if ex1 - 20 <= cx <= ex2 + 20 and ey1 - 20 <= cy <= ey2 + 20:
+                        continue
+                        
+                    dist_to_center = np.sqrt((cx - w/2.0)**2 + (cy - h/2.0)**2)
+                    max_dist = np.sqrt((w/2.0)**2 + (h/2.0)**2)
+                    center_score = 1.0 - (dist_to_center / (max_dist + 1e-6))
+                    
+                    # 면적이 클수록 (파편이 아닐수록) 압도적으로 높은 점수 부여
+                    score = center_score * (r_est ** 2)
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_box = (cx, cy, r_est)
+                        
+        if best_box is not None:
+            cx, cy, r_est = best_box
+            # 박스를 살짝 여유있게 잡아줌
+            pad = r_est * 0.2
+            inv_scale = 1.0 / scale
+            
+            orig_cx = cx * inv_scale
+            orig_cy = cy * inv_scale
+            orig_r = r_est * inv_scale
+            orig_pad = pad * inv_scale
+            
+            box_arr = np.array([
+                max(0, int(orig_cx - orig_r - orig_pad)),
+                max(0, int(orig_cy - orig_r - orig_pad)),
+                min(orig_w, int(orig_cx + orig_r + orig_pad)),
+                min(orig_h, int(orig_cy + orig_r + orig_pad)),
+            ])
+            return box_arr
+            
+        return None
 
     def get_binary_mask(self, mask):
         return (mask * 255).astype(np.uint8)
