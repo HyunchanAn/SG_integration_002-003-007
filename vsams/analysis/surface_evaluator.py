@@ -112,8 +112,21 @@ class SurfaceEvaluator:
         Returns:
             A list containing the crop coordinates for [coin_box, reflection_box] if detected, else None.
         """
-        h, w = img.shape[:2]
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        orig_h, orig_w = img.shape[:2]
+        max_dim = 800.0
+        scale = 1.0
+        
+        # Optimization: Downsample if image is too large to prevent HoughCircles hanging
+        if max(orig_h, orig_w) > max_dim:
+            scale = max_dim / float(max(orig_h, orig_w))
+            new_w = int(orig_w * scale)
+            new_h = int(orig_h * scale)
+            work_img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        else:
+            work_img = img
+
+        h, w = work_img.shape[:2]
+        gray = cv2.cvtColor(work_img, cv2.COLOR_BGR2GRAY)
 
         # Preprocessing: Maximize contrast using CLAHE and median blur
         clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
@@ -165,22 +178,29 @@ class SurfaceEvaluator:
             x, y, r = best_candidate
             pad = int(r * 0.1)
 
+            # Map coordinates back to original scale
+            inv_scale = 1.0 / scale
+            orig_x = int(x * inv_scale)
+            orig_y = int(y * inv_scale)
+            orig_r = int(r * inv_scale)
+            orig_pad = int(pad * inv_scale)
+
             coin_box = [
-                max(0, int(x - r - pad)),
-                max(0, int(y - r - pad)),
-                min(w, int(x + r + pad)),
-                min(h, int(y + r + pad)),
+                max(0, orig_x - orig_r - orig_pad),
+                max(0, orig_y - orig_r - orig_pad),
+                min(orig_w, orig_x + orig_r + orig_pad),
+                min(orig_h, orig_y + orig_r + orig_pad),
             ]
 
             # Auto-generate corresponding reflection region beneath the coin
-            ref_y1 = coin_box[3] + 15
+            ref_y1 = coin_box[3] + int(15 * inv_scale)
             ref_height = coin_box[3] - coin_box[1]
 
             ref_box = [
                 coin_box[0],
-                min(h - 10, ref_y1),
+                min(orig_h - int(10 * inv_scale), ref_y1),
                 coin_box[2],
-                min(h, ref_y1 + ref_height),
+                min(orig_h, ref_y1 + ref_height),
             ]
 
             return [coin_box, ref_box]

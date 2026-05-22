@@ -117,3 +117,25 @@
 - .github/workflows/ci.yml 파일의 Install Dependencies 단계에서 torch와 torchvision을 모두 PyTorch CPU 전용 인덱스(--index-url https://download.pytorch.org/whl/cpu)에서 일괄 다운로드하여 함께 빌드되도록 설치 명령을 수정함.
 - 수정 사항을 반영하여 원격 리포지토리에 푸시하고 CI 실행 검증을 재개함.
 
+[2026-05-22 09:42:00] SFE 순차 분석 UI 리팩토링 및 Streamlit 사양 경고 제거
+
+19. SFE 분석 사용성 문제 개선을 위한 UI 리팩토링 진행
+- 탭 형태 또는 라디오 버튼 토글 방식의 Liquid 1과 Liquid 2 분석 분기 구조를 제거함.
+- SFE 측정을 위한 사진에서 Step 2에서 시약을 재선택해야 했던 불필요하고 중복된 위젯을 제외시킴.
+- Liquid 1 분석 화면 바로 아래에 Liquid 2 분석 화면을 세로 방향으로 연속 배치하여, 스크롤을 내리며 연속적으로 분석할 수 있는 단일 스크린 분석 흐름을 구축함.
+- Liquid 1 단계에서 감지된 동전의 중심 좌표와 반경(shared_coin_pt, shared_coin_r)이 Liquid 2 단계로 원활하게 넘어가도록 기하 정보를 자동 연동하여 보존함.
+
+20. Streamlit 최신 사양 대응 및 Deprecation 경고 수정
+- app.py 파일 내에 남아있던 모든 use_container_width=True 매개변수를 최신 Streamlit 권장 사양인 width="stretch"로 치환함.
+- STEP 3(V-SAMS), STEP 4(SG-TERRA), STEP 5(Report) 등에 적용하여 화면 경고 메시지를 깔끔하게 제거함.
+- pytest E2E 통합 테스트(tests/test_integration.py)를 수행하여 수정된 코드와 통합 분석 파이프라인의 물리 연산 무결성을 최종 검증 완료함.
+
+21. 액적 수동 지정 시 Box Prompt 대신 Point Prompt 도입 (2026-05-22)
+- 사용자가 액적 수동 지정 시 번거로운 반경 지정 슬라이더를 거쳐 박스를 그려야 하는 불편함을 해소함.
+- 수동 지정 모드에서 반경 조절 위젯을 완전히 제거하고, 사용자가 클릭한 액적의 중심점(Point) 정보 하나만으로 SAM 2 모듈이 전체 물방울 영역을 자동으로 추론하여 마스킹할 수 있도록 모델 호출 인자를 point_coords 및 point_labels 기반으로 개편함.
+- 이를 통해 액적 인식의 조작 정확도를 향상시키고 좁은 반경으로 인한 세그멘테이션 왜곡 현상을 원천 차단함.
+
+22. V-SAMS 모듈 고해상도 이미지 연산 병목 최적화 (2026-05-22)
+- STEP 3 (V-SAMS) 진입 시 고해상도 원본 이미지(예: 4K 해상도)가 입력될 경우, OpenCV HoughCircles 연산량이 기하급수적으로 증가하여 분석 프로세스가 무한 대기(Hang)에 빠지는 현상을 식별함.
+- `vsams/analysis/surface_evaluator.py` 내부의 `_auto_detect_boxes` 메서드에 다운샘플링(Downsampling) 기법을 도입하여, 원본 이미지의 최대 크기가 800px을 초과할 경우 축소된 해상도에서 원을 감지하도록 최적화함.
+- 감지된 바운딩 박스 좌표는 다시 원본 스케일로 역산하여 반환하도록 처리함으로써, V-SAMS 성능 효율성을 극대화함과 동시에 메모리 누수 및 블로킹 이슈를 완벽히 해결함.
