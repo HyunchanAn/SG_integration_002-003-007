@@ -27,7 +27,7 @@
 앱 초기화 시(`_load_engines()`), 필요한 파일들의 존재 여부 및 MD5 체크섬을 검사하고, 누락된 가중치들은 자동으로 다운로드됩니다.
 
 - Depth-Anything-V2 모델: `depth-anything/Depth-Anything-V2-Small` (HF 공식 저장소)
-- 기타 Custom 가중치 (SAM2, V-SAMS, MobileSAM): `HyunchanAn/sg-integration-weights` (사설 저장소)
+- 기타 Custom 가중치 (SAM2, V-SAMS, MobileSAM): `chemahc94/sg-weights` (사설 저장소)
 
 네트워크 보안 정책으로 인해 다운로드가 차단된 오프라인 환경인 경우, 사전에 다운로드하여 `checkpoints/`, `models/`, `vsams/data/` 경로에 배치해야 합니다.
 

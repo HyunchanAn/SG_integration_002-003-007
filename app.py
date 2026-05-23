@@ -593,8 +593,8 @@ def _load_engines():
     # 1. Depth-Anything-V2
     da_enc    = "vits"
     da_ckpt   = "models/depth_anything_v2/depth_anything_v2_vits.pth"
-    # HF Hub 리포지토리 지정 (실제 계정으로 변경 필요)
-    HF_REPO_ID = "HyunchanAn/sg-integration-weights"
+    # HF Hub 리포지토리 지정 (사용자 실제 계정)
+    HF_REPO_ID = "chemahc94/sg-weights"
     
     os.makedirs("models/depth_anything_v2", exist_ok=True)
     os.makedirs("checkpoints", exist_ok=True)
