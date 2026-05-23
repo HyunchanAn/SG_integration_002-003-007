@@ -737,16 +737,16 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                     
                     pt_key = f"pt_coin_{liq_key}"
                     if pt_key not in st.session_state:
-                        # 다른 탭에서 이미 설정한 공유 좌표가 있다면 기본값으로 할당
-                        st.session_state[pt_key] = st.session_state.get("shared_coin_pt", None)
+                        # 탭 별 좌표로 고립
+                        st.session_state[pt_key] = st.session_state.get(f"shared_coin_pt_{liq_key}", None)
                     
                     disp_rgb = rgb.copy()
                     click_pt = st.session_state[pt_key]
                     
-                    # 동전 반경을 조절할 수 있는 슬라이더 (공유 반경 동기화 적용)
-                    default_r = st.session_state.get("shared_coin_r", 300)
+                    # 동전 반경을 조절할 수 있는 슬라이더 (탭별 공유 반경 동기화 적용)
+                    default_r = st.session_state.get(f"shared_coin_r_{liq_key}", 300)
                     r_val = st.slider("동전 반경 (px)" if lang == "ko" else "Coin Radius (px)", 10, 800, default_r, key=f"r_{liq_key}")
-                    st.session_state["shared_coin_r"] = r_val
+                    st.session_state[f"shared_coin_r_{liq_key}"] = r_val
                     
                     if click_pt is not None:
                         cx, cy = click_pt
@@ -766,7 +766,7 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                             if clicked_coord != st.session_state.get(f"last_coords_{liq_key}"):
                                 st.session_state[pt_key] = clicked_coord
                                 st.session_state[f"last_coords_{liq_key}"] = clicked_coord
-                                st.session_state["shared_coin_pt"] = clicked_coord
+                                st.session_state[f"shared_coin_pt_{liq_key}"] = clicked_coord
                                 # 세션 상태 강제 동기화로 number_input 재사용 캐시 꼬임 해결
                                 st.session_state[f"cx_in_{liq_key}"] = clicked_coord[0]
                                 st.session_state[f"cy_in_{liq_key}"] = clicked_coord[1]
@@ -799,9 +799,9 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                         min(w, cx_input + r_val),
                         min(h, cy_input + r_val)
                     ])
-                    # 미세조정 값을 글로벌 공유 세션에 업데이트
-                    st.session_state["shared_coin_pt"] = (cx_input, cy_input)
-                    st.session_state["shared_coin_r"] = r_val
+                    # 미세조정 값을 탭별 세션에 업데이트
+                    st.session_state[f"shared_coin_pt_{liq_key}"] = (cx_input, cy_input)
+                    st.session_state[f"shared_coin_r_{liq_key}"] = r_val
                     coin_ok = True
                     
                     # 최종 적용된 바운딩 박스 및 실시간 SAM 2 코인 마스크 오버레이 시각화
@@ -828,7 +828,7 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                     
                     if st.button("수동 지정 포인트 초기화" if lang == "ko" else "Reset Manual Target", key=f"rst_manual_{liq_key}"):
                         st.session_state[pt_key] = None
-                        st.session_state["shared_coin_pt"] = None
+                        st.session_state[f"shared_coin_pt_{liq_key}"] = None
                         st.rerun()
             else:
                 # 자동 감지 모드
@@ -836,14 +836,14 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                 with col_o:
                     st.image(rgb, caption="Original", width="stretch")
                 with col_d:
-                    # 이미 신뢰할 수 있게 설정된 다른 탭의 공유 좌표가 있는지 확인
-                    shared_pt = st.session_state.get("shared_coin_pt", None)
-                    shared_r = st.session_state.get("shared_coin_r", 300)
+                    # 이미 신뢰할 수 있게 설정된 이 탭만의 공유 좌표가 있는지 확인
+                    shared_pt = st.session_state.get(f"shared_coin_pt_{liq_key}", None)
+                    shared_r = st.session_state.get(f"shared_coin_r_{liq_key}", 300)
                     
                     coin_box = None
                     
                     if shared_pt is not None:
-                        # 이전에 확정된 동전 정보를 우선적으로 재사용하여 탭 간 무결성 확보
+                        # 현재 탭에서 확정된 동전 정보를 우선적으로 재사용
                         cx_s, cy_s = shared_pt
                         coin_box = np.array([
                             max(0, cx_s - shared_r),
@@ -851,8 +851,8 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                             min(w, cx_s + shared_r),
                             min(h, cy_s + shared_r)
                         ])
-                        st.info("이전 분석에서 확정된 동전 좌표 정보를 기반으로 자동 세그멘테이션을 수행합니다." if lang == "ko"
-                                else "Using confirmed coin coordinates from previous analysis for auto segmentation.")
+                        st.info("현재 탭에서 설정된 동전 좌표 정보를 기반으로 세그멘테이션을 수행합니다." if lang == "ko"
+                                else "Using coin coordinates confirmed in the current tab for segmentation.")
                     else:
                         with st.spinner("Detecting coin..."):
                             coin_box, _ = sfe_analyzer.auto_detect_coin_candidate(bgr)
@@ -875,9 +875,9 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                                     else "Coin boundaries not found. Attempting auto segmentation on image center.")
                     
                     if coin_box is not None:
-                        # 획득된 동전 위치를 글로벌 공유 좌표 세션에 저장
-                        st.session_state["shared_coin_pt"] = (int((coin_box[0] + coin_box[2])/2), int((coin_box[1] + coin_box[3])/2))
-                        st.session_state["shared_coin_r"] = int((coin_box[2] - coin_box[0])/2)
+                        # 획득된 동전 위치를 현재 탭 공유 좌표 세션에 저장
+                        st.session_state[f"shared_coin_pt_{liq_key}"] = (int((coin_box[0] + coin_box[2])/2), int((coin_box[1] + coin_box[3])/2))
+                        st.session_state[f"shared_coin_r_{liq_key}"] = int((coin_box[2] - coin_box[0])/2)
                         
                         prev = rgb.copy()
                         # 자동 감지에서도 획득된 SAM 2 마스크를 빨간색으로 오버레이하여 사전 정합성 검증
