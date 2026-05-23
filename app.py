@@ -46,16 +46,8 @@ except ImportError:
     HAS_IMG_COORDS = False
 
 # ---------------------------------------------------------------------------
-# 핵심 라이브러리 임포트 (각 모듈은 프로젝트 루트에 복사되어 있음)
+# 핵심 라이브러리 임포트
 # ---------------------------------------------------------------------------
-# Streamlit의 핫 리로드(Hot-Reload) 모듈 와처 스레드와 경합으로 인해 발생하는
-# sys.modules KeyError(예: KeyError: 'src.seg', KeyError: 'src.topo') 문제를 방지하기 위해
-# 임포트 전 sys.modules에서 로컬 패키지 엔트리를 강제로 초기화
-import sys
-for _k in list(sys.modules.keys()):
-    if _k in ["src", "deepdrop_sfe", "vsams"] or _k.startswith(("src.", "deepdrop_sfe.", "vsams.")):
-        sys.modules.pop(_k, None)
-
 from deepdrop_sfe import AIContactAngleAnalyzer, DropletPhysics, PerspectiveCorrector
 from vsams.analysis.surface_evaluator import SurfaceEvaluator
 from src.seg.sam2_wrapper import SAM2BaseWrapper
