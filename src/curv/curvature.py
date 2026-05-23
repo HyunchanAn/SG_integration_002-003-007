@@ -10,7 +10,7 @@ class CurvatureAnalyzer:
         """
         self.sigma = smoothing_sigma
 
-    def calculate_gaussian_curvature(self, depth_map: np.ndarray, mask: np.ndarray = None) -> np.ndarray:
+    def calculate_gaussian_curvature(self, depth_map: np.ndarray, mask: np.ndarray = None, pixel_to_mm: float = 1.0, z_scale: float = 1.0) -> np.ndarray:
         """
         Depth Map 식으로부터 Gaussian Curvature(K)를 계산.
         K = (Zxx * Zyy - Zxy^2) / (1 + Zx^2 + Zy^2)^2
@@ -18,17 +18,21 @@ class CurvatureAnalyzer:
         
         :param depth_map: Depth-Anything-V2에서 추출된 2D Depth 배열
         :param mask: 강판 타겟 영역 마스크 (배경 배제)
-        :return: 각 픽셀별 Gaussian Curvature 배열
+        :param pixel_to_mm: 1 픽셀당 mm 스케일 (스케일링 인자)
+        :param z_scale: Z축(Depth) 변환용 보정 계수
+        :return: 각 픽셀별 물리적 스케일이 적용된 Gaussian Curvature 배열 (단위: 1/mm^2)
         """
         # 노이즈를 줄여 미분 오차 방지
-        Z = gaussian_filter(depth_map.astype(np.float32), sigma=self.sigma)
+        # z_scale을 곱하여 Z축도 물리 단위로 대략적 변환
+        Z = gaussian_filter(depth_map.astype(np.float32), sigma=self.sigma) * pixel_to_mm * z_scale
         
         # 1차 편미분 (x, y 방향의 Gradient)
-        Zy, Zx = np.gradient(Z)
+        # spacing(pixel_to_mm)을 적용하여 공간적 거리를 mm 단위로 미분
+        Zy, Zx = np.gradient(Z, pixel_to_mm, pixel_to_mm)
         
         # 2차 편미분 (Hessian Matrix 성분)
-        Zyy, Zyx = np.gradient(Zy)
-        Zxy, Zxx = np.gradient(Zx)
+        Zyy, Zyx = np.gradient(Zy, pixel_to_mm, pixel_to_mm)
+        Zxy, Zxx = np.gradient(Zx, pixel_to_mm, pixel_to_mm)
         
         # Gaussian Curvature 연산 (K)
         # 평면 = 0, 볼록/오목 = 양수, 말안장(Saddle) = 음수
@@ -43,16 +47,16 @@ class CurvatureAnalyzer:
             
         return K
 
-    def calculate_mean_curvature(self, depth_map: np.ndarray, mask: np.ndarray = None) -> np.ndarray:
+    def calculate_mean_curvature(self, depth_map: np.ndarray, mask: np.ndarray = None, pixel_to_mm: float = 1.0, z_scale: float = 1.0) -> np.ndarray:
         """
         Depth Map 식으로부터 Mean Curvature(H)를 계산.
         H = ((1 + Zx^2)*Zyy - 2*Zx*Zy*Zxy + (1 + Zy^2)*Zxx) / (2*(1 + Zx^2 + Zy^2)^(3/2))
         """
-        Z = gaussian_filter(depth_map.astype(np.float32), sigma=self.sigma)
+        Z = gaussian_filter(depth_map.astype(np.float32), sigma=self.sigma) * pixel_to_mm * z_scale
         
-        Zy, Zx = np.gradient(Z)
-        Zyy, Zyx = np.gradient(Zy)
-        Zxy, Zxx = np.gradient(Zx)
+        Zy, Zx = np.gradient(Z, pixel_to_mm, pixel_to_mm)
+        Zyy, Zyx = np.gradient(Zy, pixel_to_mm, pixel_to_mm)
+        Zxy, Zxx = np.gradient(Zx, pixel_to_mm, pixel_to_mm)
         
         numerator = (1 + Zx**2)*Zyy - 2*Zx*Zy*Zxy + (1 + Zy**2)*Zxx
         denominator = 2 * (1 + Zx**2 + Zy**2)**1.5

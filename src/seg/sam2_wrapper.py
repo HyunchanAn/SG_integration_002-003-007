@@ -45,10 +45,34 @@ class SAM2BaseWrapper:
                 torch.backends.cuda.matmul.allow_tf32 = True
                 torch.backends.cudnn.allow_tf32 = True
 
-    def load_model(self):
+    def load_model(self, use_mobilesam: bool = False):
         """
-        HuggingFace Hub를 통해 모델 파라미터를 메모리에 적재.
+        HuggingFace Hub 또는 MobileSAM 체크포인트를 통해 모델 파라미터를 메모리에 적재.
+        :param use_mobilesam: True일 경우 엣지 환경을 위한 MobileSAM으로 폴백
         """
+        self.is_mobilesam = use_mobilesam
+        if use_mobilesam:
+            print("Fallback: Loading MobileSAM for Edge Environment...")
+            try:
+                from mobile_sam import sam_model_registry, SamPredictor
+            except ImportError:
+                raise ImportError("MobileSAM is required for fallback. Install via: pip install git+https://github.com/ChaoningZhang/MobileSAM.git")
+                
+            import os
+            import urllib.request
+            
+            ckpt_path = "checkpoints/mobile_sam.pt"
+            os.makedirs("checkpoints", exist_ok=True)
+            if not os.path.exists(ckpt_path):
+                print("Downloading mobile_sam.pt...")
+                urllib.request.urlretrieve("https://github.com/ChaoningZhang/MobileSAM/raw/master/weights/mobile_sam.pt", ckpt_path)
+                
+            self.model = sam_model_registry["vit_t"](checkpoint=ckpt_path)
+            self.model.to(device=self.device).eval()
+            self.predictor = SamPredictor(self.model)
+            print("MobileSAM loaded successfully.")
+            return
+
         from sam2.build_sam import build_sam2_hf
         from sam2.sam2_image_predictor import SAM2ImagePredictor
 

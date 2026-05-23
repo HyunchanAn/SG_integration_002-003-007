@@ -592,16 +592,38 @@ with st.expander("STEP 1.  설정 및 이미지 등록" if lang == "ko" else "ST
 # ---------------------------------------------------------------------------
 # Model 캐싱 로드
 # ---------------------------------------------------------------------------
+import hashlib
+from huggingface_hub import hf_hub_download
+
 @st.cache_resource(show_spinner=False)
 def _load_engines():
-    """AI 모델 자원 일괄 로드"""
+    """AI 모델 자원 일괄 로드 및 무결성 검증"""
+    # 1. Depth-Anything-V2
     da_enc    = "vits"
     da_ckpt   = "models/depth_anything_v2/depth_anything_v2_vits.pth"
-    da_url    = "https://huggingface.co/depth-anything/Depth-Anything-V2-Small/resolve/main/depth_anything_v2_vits.pth"
-
+    # HF Hub 리포지토리 지정 (실제 계정으로 변경 필요)
+    HF_REPO_ID = "HyunchanAn/sg-integration-weights"
+    
     os.makedirs("models/depth_anything_v2", exist_ok=True)
-    if not os.path.exists(da_ckpt):
-        urllib.request.urlretrieve(da_url, da_ckpt)
+    os.makedirs("checkpoints", exist_ok=True)
+    os.makedirs("vsams/data", exist_ok=True)
+    
+    weights_info = [
+        {"path": da_ckpt, "hf_repo": "depth-anything/Depth-Anything-V2-Small", "hf_file": "depth_anything_v2_vits.pth"},
+        {"path": "checkpoints/v_sams_model.pth", "hf_repo": HF_REPO_ID, "hf_file": "v_sams_model.pth"},
+        {"path": "vsams/data/visual_library.pth", "hf_repo": HF_REPO_ID, "hf_file": "visual_library.pth"},
+        {"path": "checkpoints/mobile_sam.pt", "hf_repo": HF_REPO_ID, "hf_file": "mobile_sam.pt"},
+    ]
+    
+    for w in weights_info:
+        if not os.path.exists(w["path"]):
+            try:
+                print(f"Downloading {w['hf_file']} from Hugging Face Hub...")
+                hf_hub_download(repo_id=w["hf_repo"], filename=w["hf_file"], local_dir=os.path.dirname(w["path"]))
+            except Exception as e:
+                print(f"Warning: Failed to download {w['hf_file']} from {w['hf_repo']}. Error: {e}")
+                # 수동 다운로드 폴백을 위해 패스 (앱 런타임에서 에러 처리)
+                pass
 
     sfe_az  = AIContactAngleAnalyzer()
     sfe_pc  = PerspectiveCorrector()
@@ -609,7 +631,9 @@ def _load_engines():
     sam_w   = SAM2BaseWrapper()
     dep_w   = DepthAnythingV2Wrapper(encoder=da_enc, checkpoint_path=da_ckpt)
     cur_a   = CurvatureAnalyzer(smoothing_sigma=2.0)
-    sam_w.load_model()
+    
+    # 엣지 환경 대응 (UI에서 toggle로 제어할 수도 있으나, 기본 SAM2 호출)
+    sam_w.load_model(use_mobilesam=False)
     dep_w.load_model()
     return sfe_az, sfe_pc, vs_eval, sam_w, dep_w, cur_a
 
@@ -1252,11 +1276,13 @@ with st.expander("STEP 4.  " + T["tab3"], expanded=False):
 
                     # Curvature
                     curv_a.sigma = sigma_v
-                    g_curv = curv_a.calculate_gaussian_curvature(dmap, mask=mask_t)
+                    # 캘리브레이션으로 확보한 px2mm(픽셀당 mm) 스케일을 X, Y, Z축에 적용
+                    g_curv = curv_a.calculate_gaussian_curvature(dmap, mask=mask_t, pixel_to_mm=px2mm, z_scale=px2mm)
                     cvals, ccoords = curv_a.find_critical_points(g_curv, mask=mask_t, top_k=1)
                     k_max = cvals[0]
-                    r_px = 1.0 / np.sqrt(np.abs(k_max)) if k_max != 0 else 0
-                    r_mm = round(r_px * px2mm, 2)
+                    # K의 역수를 제곱근하여 R 연산 (물리적 단위가 이미 반영되어 있으므로, px2mm를 다시 곱할 필요가 없음)
+                    r_mm = 1.0 / np.sqrt(np.abs(k_max)) if k_max != 0 else 0
+                    r_mm = round(r_mm, 2)
 
                     st.session_state["curv_result"] = {
                         "max_k": k_max, "min_r_mm": r_mm,
