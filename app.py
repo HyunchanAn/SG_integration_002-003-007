@@ -610,8 +610,15 @@ def _load_engines():
     for w in weights_info:
         if not os.path.exists(w["path"]):
             try:
+                # Streamlit Secrets에서 토큰을 가져오며, 없을 경우 None으로 익명 다운로드 시도
+                hf_token = st.secrets.get("HF_TOKEN") if "HF_TOKEN" in st.secrets else None
                 print(f"Downloading {w['hf_file']} from Hugging Face Hub...")
-                hf_hub_download(repo_id=w["hf_repo"], filename=w["hf_file"], local_dir=os.path.dirname(w["path"]))
+                hf_hub_download(
+                    repo_id=w["hf_repo"], 
+                    filename=w["hf_file"], 
+                    local_dir=os.path.dirname(w["path"]),
+                    token=hf_token
+                )
             except Exception as e:
                 print(f"Warning: Failed to download {w['hf_file']} from {w['hf_repo']}. Error: {e}")
                 # 수동 다운로드 폴백을 위해 패스 (앱 런타임에서 에러 처리)
