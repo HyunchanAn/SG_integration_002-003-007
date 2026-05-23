@@ -1380,6 +1380,7 @@ with st.expander("STEP 5.  " + T["tab4"], expanded=False):
             rows["Total AI Inference Time (s)"] = round(total_inf_time, 3)
 
         df = pd.DataFrame(list(rows.items()), columns=["Parameter", "Value"])
+        df["Value"] = df["Value"].astype(str)
         st.dataframe(df, width="stretch", hide_index=True)
 
         st.markdown("---")
