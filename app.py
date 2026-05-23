@@ -45,6 +45,11 @@ try:
 except ImportError:
     HAS_IMG_COORDS = False
 
+import gc
+import torch
+# Streamlit Cloud의 가용 RAM 한계(OOM) 극복을 위해 CPU 연산 스레드 및 메모리 스파이크 제한
+torch.set_num_threads(1)
+
 # ---------------------------------------------------------------------------
 # 핵심 라이브러리 임포트
 # ---------------------------------------------------------------------------
@@ -642,11 +647,21 @@ with st.spinner(T["loading"]):
 # ---------------------------------------------------------------------------
 # Helper: 이미지 로딩 (UploadedFile -> BGR / RGB)
 # ---------------------------------------------------------------------------
-def _load_img(uploaded):
-    """UploadedFile -> (bgr, rgb) numpy arrays"""
+def _load_img(uploaded, max_size=800):
+    """UploadedFile -> (bgr, rgb) numpy arrays, 메모리 오버헤드 방지를 위한 자동 리사이징"""
+    # 렌더링/업로드 순간마다 쌓이는 이전 메모리를 명시적으로 해제
+    gc.collect()
+
     raw = np.asarray(bytearray(uploaded.read()), dtype=np.uint8)
     uploaded.seek(0)
     bgr = cv2.imdecode(raw, cv2.IMREAD_COLOR)
+    
+    # OOM 방어 레이어: 원본 이미지의 크기를 제한하여 배열 메모리 사용량을 기하급수적으로 낮춤
+    h, w = bgr.shape[:2]
+    if max(h, w) > max_size:
+        scale = max_size / float(max(h, w))
+        bgr = cv2.resize(bgr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     return bgr, rgb
 
