@@ -80,3 +80,16 @@ docker compose up --build -d
 3. **이미지 확인**:
    - 성공적으로 푸시된 도커 이미지는 GitHub 프로필 또는 조직의 Packages 탭에서 확인 및 내려받기(pull)할 수 있습니다.
 
+## ☁️ Streamlit Cloud 배포 및 OOM 방어 가이드
+
+이 애플리케이션은 내부적으로 SAM 2.1 및 Depth-Anything-V2와 같은 고중량 모델을 가동합니다. 무료 Streamlit Cloud와 같은 제한된 환경(1~2GB RAM)에서의 크래시(OOM, ConnectionClosedError 1011)를 방어하기 위해 다음과 같은 로직이 코어에 내장되어 있습니다.
+
+- **입력 해상도 방어**: 사용자가 고해상도 이미지를 업로드하더라도 엔진 내부에서 최대 800px로 강제 Downscaling 처리.
+- **가비지 컬렉션(GC)**: 매 상호작용 및 이미지 렌더링 시 명시적인 `gc.collect()` 가동.
+- **단일 스레딩**: `torch.set_num_threads(1)`을 적용하여 급격한 스레드 스파이크 및 자원 고갈 차단.
+
+**⚠️ 필수 보안 설정 (Secrets):**
+앱 구동 시 사설 Hugging Face 저장소(`chemahc94/sg-weights`)로부터 가중치를 받아오기 위해서는 반드시 Streamlit 대시보드(App settings > Secrets)에 접근 토큰을 명시해야 합니다.
+```toml
+HF_TOKEN = "hf_본인의_허깅페이스_토큰_입력"
+```

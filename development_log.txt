@@ -195,3 +195,11 @@
 34. 가중치 자동 다운로드 및 무결성 검증
 - app.py의 모델 로딩부에 Hugging Face Hub 기반의 자동 다운로드 파이프라인을 구축함.
 - README.md의 가중치 수동 설치 안내를 자동 다운로드 방식으로 개정함.
+
+
+35. Streamlit Cloud 배포 및 안정화 패치 (2026-05-23)
+- 모듈 핫-로드 간섭(KeyError) 방지를 위해 sys.modules.pop 핵 제거.
+- Hugging Face Private Repository 인증을 위한 st.secrets 맵핑 적용 (HF_TOKEN).
+- STEP 5 DataFrame 렌더링 시 PyArrow 혼합 타입(ArrowInvalid) 에러 해결을 위해 Value 컬럼 문자열 명시적 캐스팅.
+- 메모리 초과(OOM, WebSocket 1011 Error) 방어를 위한 방어선 구축: 1) _load_img 내 800px 강제 리사이징 2) gc.collect() 명시적 호출 3) torch.set_num_threads(1) 적용.
+- Liquid 1과 Liquid 2 간 동전 좌표 상태(shared_coin_pt)가 공유되어 생기던 세그멘테이션 오류 해결. 탭별 고립(Isolation) 처리.
