@@ -447,6 +447,16 @@ with st.expander("STEP 1.  설정 및 이미지 등록" if lang == "ko" else "ST
         if do_3d != st.session_state["do_3d"]:
             st.session_state["do_3d"] = do_3d
             st.rerun()
+            
+        import torch
+        is_cpu_env = not (torch.cuda.is_available() or torch.backends.mps.is_available())
+        use_fast_mode = st.toggle(
+            "⚡ 고속 연산 모드 (OpenCV Fallback)" if lang == "ko" else "⚡ Fast CV Mode (Fallback)", 
+            value=st.session_state.get("use_fast_mode", is_cpu_env)
+        )
+        if use_fast_mode != st.session_state.get("use_fast_mode"):
+            st.session_state["use_fast_mode"] = use_fast_mode
+            st.rerun()
 
     st.markdown("---")
     st.markdown("##### " + T["params"])
@@ -809,7 +819,14 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                     with st.spinner("Calculating coin mask..."):
                         try:
                             sfe_analyzer.set_image(rgb)
-                            mask_coin, _ = sfe_analyzer.predict_mask(box=coin_box)
+                            if st.session_state.get("use_fast_mode", False):
+                                mask_coin = np.zeros(rgb.shape[:2], dtype=bool)
+                                cx, cy = int((coin_box[0]+coin_box[2])/2), int((coin_box[1]+coin_box[3])/2)
+                                cr = int((coin_box[2]-coin_box[0])/2)
+                                import cv2
+                                cv2.circle(mask_coin.view(np.uint8), (cx, cy), cr, 1, -1)
+                            else:
+                                mask_coin, _ = sfe_analyzer.predict_mask(box=coin_box)
                             mask_bin = sfe_analyzer.get_binary_mask(mask_coin)
                             
                             # 빨간색 마스크 쉐이딩 추가
@@ -884,7 +901,14 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                         with st.spinner("Calculating coin mask..."):
                             try:
                                 sfe_analyzer.set_image(rgb)
-                                mask_coin, _ = sfe_analyzer.predict_mask(box=coin_box)
+                                if st.session_state.get("use_fast_mode", False):
+                                    mask_coin = np.zeros(rgb.shape[:2], dtype=bool)
+                                    cx, cy = int((coin_box[0]+coin_box[2])/2), int((coin_box[1]+coin_box[3])/2)
+                                    cr = int((coin_box[2]-coin_box[0])/2)
+                                    import cv2
+                                    cv2.circle(mask_coin.view(np.uint8), (cx, cy), cr, 1, -1)
+                                else:
+                                    mask_coin, _ = sfe_analyzer.predict_mask(box=coin_box)
                                 mask_bin = sfe_analyzer.get_binary_mask(mask_coin)
                                 
                                 overlay = prev.copy()
@@ -910,7 +934,14 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                 st.markdown("#### 2. 원근 보정 및 액적 분석" if lang == "ko" else "#### 2. Perspective Correction & Droplet Analysis")
 
                 sfe_analyzer.set_image(rgb)
-                mask_coin, _ = sfe_analyzer.predict_mask(box=coin_box)
+                if st.session_state.get("use_fast_mode", False):
+                    mask_coin = np.zeros(bgr.shape[:2], dtype=bool)
+                    cx, cy = int((coin_box[0]+coin_box[2])/2), int((coin_box[1]+coin_box[3])/2)
+                    cr = int((coin_box[2]-coin_box[0])/2)
+                    import cv2
+                    cv2.circle(mask_coin.view(np.uint8), (cx, cy), cr, 1, -1)
+                else:
+                    mask_coin, _ = sfe_analyzer.predict_mask(box=coin_box)
                 mask_bin = sfe_analyzer.get_binary_mask(mask_coin)
                 H, ws, coin_info, _ = sfe_corrector.find_homography(rgb, mask_bin)
 
@@ -980,9 +1011,17 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                             with st.spinner("Calculating droplet mask..."):
                                 try:
                                     sfe_analyzer.set_image(warped)
-                                    pt_coords = np.array([[dcx_input, dcy_input]])
-                                    pt_labels = np.array([1])
-                                    d_mask, _ = sfe_analyzer.predict_mask(point_coords=pt_coords, point_labels=pt_labels)
+                                    if st.session_state.get("use_fast_mode", False):
+                                        ref_r = st.session_state.get(f"shared_coin_r_{liq_key}", 300)
+                                        box_size = ref_r * 2
+                                        x1, y1 = max(0, dcx_input - box_size//2), max(0, dcy_input - box_size//2)
+                                        x2, y2 = min(ww, dcx_input + box_size//2), min(hw, dcy_input + box_size//2)
+                                        drop_box = np.array([x1, y1, x2, y2])
+                                        d_mask, _ = sfe_analyzer.predict_mask_fast(warped, drop_box)
+                                    else:
+                                        pt_coords = np.array([[dcx_input, dcy_input]])
+                                        pt_labels = np.array([1])
+                                        d_mask, _ = sfe_analyzer.predict_mask(point_coords=pt_coords, point_labels=pt_labels)
                                     d_mask_bin = sfe_analyzer.get_binary_mask(d_mask)
                                     
                                     # 빨간색 액적 마스크 쉐이딩 추가
@@ -1026,7 +1065,10 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                                 with st.spinner("Calculating droplet mask..."):
                                     try:
                                         sfe_analyzer.set_image(warped)
-                                        d_mask, _ = sfe_analyzer.predict_mask(box=drop_box)
+                                        if st.session_state.get("use_fast_mode", False):
+                                            d_mask, _ = sfe_analyzer.predict_mask_fast(warped, drop_box)
+                                        else:
+                                            d_mask, _ = sfe_analyzer.predict_mask(box=drop_box)
                                         d_mask_bin = sfe_analyzer.get_binary_mask(d_mask)
                                         
                                         d_overlay = dprev.copy()
@@ -1059,11 +1101,22 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                             start_time = time.time()
                             sfe_analyzer.set_image(warped)
                             if manual_droplet:
-                                pt_coords = np.array([[dcx_input, dcy_input]])
-                                pt_labels = np.array([1])
-                                d_mask, _ = sfe_analyzer.predict_mask(point_coords=pt_coords, point_labels=pt_labels)
+                                if st.session_state.get("use_fast_mode", False):
+                                    ref_r = st.session_state.get(f"shared_coin_r_{liq_key}", 300)
+                                    box_size = ref_r * 2
+                                    x1, y1 = max(0, dcx_input - box_size//2), max(0, dcy_input - box_size//2)
+                                    x2, y2 = min(ww, dcx_input + box_size//2), min(hw, dcy_input + box_size//2)
+                                    drop_box = np.array([x1, y1, x2, y2])
+                                    d_mask, _ = sfe_analyzer.predict_mask_fast(warped, drop_box)
+                                else:
+                                    pt_coords = np.array([[dcx_input, dcy_input]])
+                                    pt_labels = np.array([1])
+                                    d_mask, _ = sfe_analyzer.predict_mask(point_coords=pt_coords, point_labels=pt_labels)
                             else:
-                                d_mask, _ = sfe_analyzer.predict_mask(box=drop_box)
+                                if st.session_state.get("use_fast_mode", False):
+                                    d_mask, _ = sfe_analyzer.predict_mask_fast(warped, drop_box)
+                                else:
+                                    d_mask, _ = sfe_analyzer.predict_mask(box=drop_box)
 
                             px_mm = DropletPhysics.calculate_pixels_per_mm(coin_info[2], coin_d)
                             d_mm = DropletPhysics.calculate_contact_diameter(d_mask, px_mm)

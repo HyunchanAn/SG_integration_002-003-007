@@ -118,6 +118,48 @@ class AIContactAngleAnalyzer:
 
         return best_mask, scores[best_idx]
 
+    def predict_mask_fast(self, image_rgb, box):
+        """
+        초저사양 환경을 위한 OpenCV 고속 액적 분할 폴백.
+        SAM을 사용하지 않고 전통적인 영상처리 기법으로 0.05초 이내에 마스크를 생성함.
+        """
+        h, w = image_rgb.shape[:2]
+        x1, y1, x2, y2 = map(int, box)
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(w, x2), min(h, y2)
+        
+        mask = np.zeros((h, w), dtype=np.uint8)
+        
+        # 유효하지 않은 박스 예외 처리
+        if x2 <= x1 or y2 <= y1:
+            return mask > 0, 0.0
+            
+        roi = image_rgb[y1:y2, x1:x2]
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        
+        # 대비 향상을 위해 CLAHE 적용
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        gray = clahe.apply(gray)
+        
+        blurred = cv2.GaussianBlur(gray, (7, 7), 0)
+        _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        
+        # 노이즈 제거 (Opening) 및 뭉치기 (Closing)
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
+        
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if contours:
+            # ROI 내에서 가장 큰 윤곽선을 액적으로 간주
+            largest_cnt = max(contours, key=cv2.contourArea)
+            largest_cnt += np.array([[x1, y1]]) # 원본 이미지 좌표계로 이동
+            cv2.drawContours(mask, [largest_cnt], -1, 1, thickness=cv2.FILLED)
+            return mask > 0, 1.0
+            
+        return mask > 0, 0.0
+
     def auto_detect_coin_candidate(self, image_cv2):
         """
         [V2] V-SAMS에서 검증된 강건한 허프 변환(HoughCircles) 및 CLAHE 알고리즘을 사용하여 동전을 감지함.
