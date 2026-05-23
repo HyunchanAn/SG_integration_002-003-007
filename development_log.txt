@@ -203,3 +203,19 @@
 - STEP 5 DataFrame 렌더링 시 PyArrow 혼합 타입(ArrowInvalid) 에러 해결을 위해 Value 컬럼 문자열 명시적 캐스팅.
 - 메모리 초과(OOM, WebSocket 1011 Error) 방어를 위한 방어선 구축: 1) _load_img 내 800px 강제 리사이징 2) gc.collect() 명시적 호출 3) torch.set_num_threads(1) 적용.
 - Liquid 1과 Liquid 2 간 동전 좌표 상태(shared_coin_pt)가 공유되어 생기던 세그멘테이션 오류 해결. 탭별 고립(Isolation) 처리.
+
+
+--- 향후 최적화 아이디어 및 전략 ---
+■ STEP 2 시간 지연(Latency) 개선 및 아키텍처 고도화 방안
+현재 OOM 방어를 위해 torch.set_num_threads(1)이 강제 적용되어 CPU 단일 코어로 SAM 연산 수행 중이며, 이로 인해 물리적인 연산 지연 발생.
+
+1. ONNX Runtime CPU 전용 배포 도입
+   - 기존 PyTorch CPU 모드를 대체하여, export_onnx.py를 통해 변환된 ONNX 모델 활용.
+   - 메모리 점유율 30~50% 감소 및 싱글 스레드 자체 최적화를 통한 추론 속도 2~4배 향상 기대.
+
+2. 저사양/클라우드 환경용 전통 CV 알고리즘 폴백(Fallback)
+   - 무거운 SAM 모델 대신 고속 연산 모드 토글을 추가하여 사용자 수동 박스 기반 OpenCV 연산(가우시안 블러, Otsu 이진화 등)으로 분기.
+   - 추론 시간을 수 초에서 0.05초 이내로 단축시켜 UI 병목 제거.
+
+3. st.fragment 도입을 통한 UI 오버헤드 제어
+   - 수동 클릭 시 전체 스크립트가 재실행되는 Streamlit의 구조적 오버헤드를 막기 위해, Streamlit 1.37+의 @st.fragment 데코레이터를 활용하여 캔버스 조작부만 독립적으로 갱신.
