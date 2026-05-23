@@ -142,7 +142,14 @@ class AIContactAngleAnalyzer:
         gray = clahe.apply(gray)
         
         blurred = cv2.GaussianBlur(gray, (7, 7), 0)
-        _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        
+        # 중심점(사용자 클릭 위치) 픽셀이 액적의 코어라고 가정
+        cy_roi, cx_roi = thresh.shape[0]//2, thresh.shape[1]//2
+        
+        # 만약 중심 픽셀이 검은색(0)이라면, 액적이 어두운 것이므로 이진화 반전 수행
+        if thresh[cy_roi, cx_roi] == 0:
+            thresh = cv2.bitwise_not(thresh)
         
         # 노이즈 제거 (Opening) 및 뭉치기 (Closing)
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
@@ -151,12 +158,27 @@ class AIContactAngleAnalyzer:
         
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
+        best_cnt = None
+        min_dist = float('inf')
+        
         if contours:
-            # ROI 내에서 가장 큰 윤곽선을 액적으로 간주
-            largest_cnt = max(contours, key=cv2.contourArea)
-            largest_cnt += np.array([[x1, y1]]) # 원본 이미지 좌표계로 이동
-            cv2.drawContours(mask, [largest_cnt], -1, 1, thickness=cv2.FILLED)
-            return mask > 0, 1.0
+            for cnt in contours:
+                # 윤곽선과 중심점 간의 거리 측정 (양수: 내부, 음수: 외부)
+                dist = cv2.pointPolygonTest(cnt, (cx_roi, cy_roi), True)
+                if dist >= 0:
+                    # 클릭한 중심점을 완벽히 포함하는 윤곽선 중 가장 큰 것을 최우선 선택
+                    if best_cnt is None or cv2.contourArea(cnt) > cv2.contourArea(best_cnt):
+                        best_cnt = cnt
+                elif best_cnt is None:
+                    # 중심을 포함하는 윤곽선이 없을 경우, 가장 가까운 윤곽선을 폴백으로 선택
+                    if -dist < min_dist:
+                        min_dist = -dist
+                        best_cnt = cnt
+
+            if best_cnt is not None:
+                best_cnt += np.array([[x1, y1]]) # 원본 이미지 좌표계로 복구
+                cv2.drawContours(mask, [best_cnt], -1, 1, thickness=cv2.FILLED)
+                return mask > 0, 1.0
             
         return mask > 0, 0.0
 
