@@ -1013,7 +1013,8 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                                     sfe_analyzer.set_image(warped)
                                     if st.session_state.get("use_fast_mode", False):
                                         ref_r = st.session_state.get(f"shared_coin_r_{liq_key}", 300)
-                                        box_size = ref_r * 2
+                                        # 액적은 동전보다 작으므로 노이즈 방지를 위해 ROI 크기를 축소 (ref_r 수준 유지)
+                                        box_size = int(ref_r)
                                         x1, y1 = max(0, dcx_input - box_size//2), max(0, dcy_input - box_size//2)
                                         x2, y2 = min(ww, dcx_input + box_size//2), min(hw, dcy_input + box_size//2)
                                         drop_box = np.array([x1, y1, x2, y2])
@@ -1103,7 +1104,8 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                             if manual_droplet:
                                 if st.session_state.get("use_fast_mode", False):
                                     ref_r = st.session_state.get(f"shared_coin_r_{liq_key}", 300)
-                                    box_size = ref_r * 2
+                                    # 액적은 동전보다 작으므로 노이즈 방지를 위해 ROI 크기를 축소
+                                    box_size = int(ref_r)
                                     x1, y1 = max(0, dcx_input - box_size//2), max(0, dcy_input - box_size//2)
                                     x2, y2 = min(ww, dcx_input + box_size//2), min(hw, dcy_input + box_size//2)
                                     drop_box = np.array([x1, y1, x2, y2])

@@ -141,17 +141,43 @@ class AIContactAngleAnalyzer:
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         gray = clahe.apply(gray)
         
-        blurred = cv2.GaussianBlur(gray, (7, 7), 0)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        
+        # 중심점 (클릭한 지점)
+        cx_roi = (x2 - x1) // 2
+        cy_roi = (y2 - y1) // 2
+        max_r = min(x2 - x1, y2 - y1) // 2
+        min_r = max(5, max_r // 10)
+        
+        # 1. 형태/곡률 기반 액적 탐지 (우선순위 높음)
+        circles = cv2.HoughCircles(
+            blurred, cv2.HOUGH_GRADIENT, dp=1.2, minDist=10,
+            param1=50, param2=20, minRadius=min_r, maxRadius=max_r
+        )
+        
+        best_circle = None
+        min_dist = float('inf')
+        
+        if circles is not None:
+            circles = np.round(circles[0, :]).astype("int")
+            for (xc, yc, r) in circles:
+                dist = np.sqrt((xc - cx_roi)**2 + (yc - cy_roi)**2)
+                if dist < min_dist:
+                    min_dist = dist
+                    best_circle = (xc, yc, r)
+                    
+        # 클릭 지점(중심) 근처에서 유효한 원을 찾은 경우 즉시 반환
+        if best_circle is not None and min_dist < max_r // 2:
+            xc, yc, r = best_circle
+            cv2.circle(mask, (xc + x1, yc + y1), r, 1, thickness=cv2.FILLED)
+            return mask > 0, 1.0
+            
+        # 2. 곡률 탐지 실패 시 대비(Fallback) - 명암 기반 Otsu
         _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         
-        # 중심점(사용자 클릭 위치) 픽셀이 액적의 코어라고 가정
-        cy_roi, cx_roi = thresh.shape[0]//2, thresh.shape[1]//2
-        
-        # 만약 중심 픽셀이 검은색(0)이라면, 액적이 어두운 것이므로 이진화 반전 수행
         if thresh[cy_roi, cx_roi] == 0:
             thresh = cv2.bitwise_not(thresh)
         
-        # 노이즈 제거 (Opening) 및 뭉치기 (Closing)
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
         thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
@@ -163,14 +189,11 @@ class AIContactAngleAnalyzer:
         
         if contours:
             for cnt in contours:
-                # 윤곽선과 중심점 간의 거리 측정 (양수: 내부, 음수: 외부)
                 dist = cv2.pointPolygonTest(cnt, (cx_roi, cy_roi), True)
                 if dist >= 0:
-                    # 클릭한 중심점을 완벽히 포함하는 윤곽선 중 가장 큰 것을 최우선 선택
                     if best_cnt is None or cv2.contourArea(cnt) > cv2.contourArea(best_cnt):
                         best_cnt = cnt
                 elif best_cnt is None:
-                    # 중심을 포함하는 윤곽선이 없을 경우, 가장 가까운 윤곽선을 폴백으로 선택
                     if -dist < min_dist:
                         min_dist = -dist
                         best_cnt = cnt
