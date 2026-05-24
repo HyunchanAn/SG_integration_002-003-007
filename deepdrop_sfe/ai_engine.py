@@ -393,6 +393,33 @@ class AIContactAngleAnalyzer:
                         best_score = score
                         best_box = (cx, cy, r_est)
                         
+        if best_box is None:
+            # [Hybrid V5] 렌즈 효과(Variance Map) 탐지 실패 시, HoughCircles 곡률 추적 알고리즘으로 폴백 (2B, BA 등 매끄러운 금속 배경 대비)
+            gray_blur = cv2.GaussianBlur(gray, (7, 7), 0)
+            clahe_fallback = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            gray_clahe = clahe_fallback.apply(gray_blur.astype(np.uint8))
+            
+            circles = cv2.HoughCircles(
+                gray_clahe, cv2.HOUGH_GRADIENT, dp=1.2, minDist=30,
+                param1=50, param2=20, minRadius=int(min_r), maxRadius=int(max_r)
+            )
+            
+            if circles is not None:
+                circles = np.round(circles[0, :]).astype("int")
+                for (xc, yc, r) in circles:
+                    # 마스킹된 동전 근처 무시
+                    if ex1 - 20 <= xc <= ex2 + 20 and ey1 - 20 <= yc <= ey2 + 20:
+                        continue
+                        
+                    dist_to_center = np.sqrt((xc - w/2.0)**2 + (yc - h/2.0)**2)
+                    max_dist = np.sqrt((w/2.0)**2 + (h/2.0)**2)
+                    center_score = 1.0 - (dist_to_center / (max_dist + 1e-6))
+                    
+                    score = center_score * (r ** 2)
+                    if score > best_score:
+                        best_score = score
+                        best_box = (xc, yc, r)
+
         if best_box is not None:
             cx, cy, r_est = best_box
             # 박스를 살짝 여유있게 잡아줌
