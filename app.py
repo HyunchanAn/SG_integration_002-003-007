@@ -1077,13 +1077,37 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                                         cv2.addWeighted(d_overlay, 0.4, dprev, 0.6, 0, dprev)
                                         
                                         d_contours, _ = cv2.findContours(d_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                                        cv2.drawContours(dprev, d_contours, -1, (255, 50, 50), 3)
+                                        
+                                        # [핵심] 마스크의 원형도(Circularity) 검증
+                                        is_valid_droplet = True
+                                        if d_contours:
+                                            max_c = max(d_contours, key=cv2.contourArea)
+                                            area = cv2.contourArea(max_c)
+                                            perimeter = cv2.arcLength(max_c, True)
+                                            if perimeter > 0 and area > 100:
+                                                circularity = 4 * np.pi * area / (perimeter ** 2)
+                                                if circularity < 0.7:  # 0.7 이하면 물방울이 아니라 스크래치로 간주
+                                                    is_valid_droplet = False
+                                            else:
+                                                is_valid_droplet = False
+                                        else:
+                                            is_valid_droplet = False
+
+                                        if is_valid_droplet:
+                                            cv2.drawContours(dprev, d_contours, -1, (255, 50, 50), 3)
+                                        else:
+                                            drop_box = None # 유효하지 않으면 강제 실패 처리
+                                            
                                     except Exception as d_mask_err:
                                         pass
                                         
-                                dx1, dy1, dx2, dy2 = map(int, drop_box)
-                                cv2.rectangle(dprev, (dx1, dy1), (dx2, dy2), (255, 80, 80), 8)
-                                st.image(dprev, caption="Detected Droplet Mask (Red) & Target Area (Green)", width="stretch")
+                                if drop_box is not None:
+                                    dx1, dy1, dx2, dy2 = map(int, drop_box)
+                                    cv2.rectangle(dprev, (dx1, dy1), (dx2, dy2), (255, 80, 80), 8)
+                                    st.image(dprev, caption="Detected Droplet Mask (Red) & Target Area (Green)", width="stretch")
+                                else:
+                                    st.error("액적 자동 감지 실패 (스크래치 오인 감지됨). 상단의 '액적 영역 수동 지정' 체크박스를 켜고 마우스로 중심을 지정해 주세요." if lang == "ko"
+                                             else "Droplet automatic detection failed (noise detected). Please enable 'Manual Droplet Input' checkbox.")
                             else:
                                 st.error("액적 자동 감지 실패. 상단의 '액적 영역 수동 지정' 체크박스를 켜고 마우스로 중심을 지정해 주세요." if lang == "ko"
                                          else "Droplet automatic detection failed. Please enable 'Manual Droplet Input' checkbox.")
