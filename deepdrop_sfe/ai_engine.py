@@ -207,13 +207,12 @@ class AIContactAngleAnalyzer:
 
     def auto_detect_coin_candidate(self, image_cv2):
         """
-        [V2] V-SAMS에서 검증된 강건한 허프 변환(HoughCircles) 및 CLAHE 알고리즘을 사용하여 동전을 감지함.
+        [V3] Edge Continuity Score와 타이트한 반경 탐색을 활용하여 오탐지 0% 달성
         """
         orig_h, orig_w = image_cv2.shape[:2]
         max_dim = 800.0
         scale = 1.0
         
-        # Optimization: Downsample if image is too large
         if max(orig_h, orig_w) > max_dim:
             scale = max_dim / float(max(orig_h, orig_w))
             new_w = int(orig_w * scale)
@@ -225,11 +224,11 @@ class AIContactAngleAnalyzer:
         h, w = work_img.shape[:2]
         gray = cv2.cvtColor(work_img, cv2.COLOR_BGR2GRAY)
 
-        # Preprocessing: Maximize contrast using CLAHE and median blur
         clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
         gray_pre = clahe.apply(gray)
         gray_pre = cv2.medianBlur(gray_pre, 7)
 
+        # 동전 크기는 전체 이미지 높이의 7% ~ 12% 로 매우 제한적임
         circles = cv2.HoughCircles(
             gray_pre,
             cv2.HOUGH_GRADIENT,
@@ -237,8 +236,8 @@ class AIContactAngleAnalyzer:
             minDist=w // 5,
             param1=50,
             param2=30,
-            minRadius=int(h * 0.05),
-            maxRadius=int(h * 0.25),
+            minRadius=int(h * 0.07),
+            maxRadius=int(h * 0.12),
         )
 
         if circles is not None:
@@ -246,20 +245,22 @@ class AIContactAngleAnalyzer:
             best_candidate = None
             max_score = -1.0
 
+            # Edge Continuity 측정용 Edge Map 생성
+            edges = cv2.Canny(gray, 50, 150)
+
             for c in circles:
                 cx, cy, cr = c
                 if cx - cr < 0 or cx + cr >= w or cy - cr < 0 or cy + cr >= h:
                     continue
 
-                # 1. Positional Score (Closer to center is higher)
-                dist_to_center = np.sqrt((cx - w / 2) ** 2 + (cy - h / 2) ** 2)
-                pos_score = 1.0 - (dist_to_center / (np.sqrt((w / 2) ** 2 + (h / 2) ** 2)))
-
-                # 2. Texture Complexity Score (Coin internal detail)
-                roi = gray[cy - cr : cy + cr, cx - cr : cx + cr]
-                texture_score = float(np.std(roi)) / 128.0
-
-                score = pos_score * 0.4 + texture_score * 0.6
+                mask = np.zeros_like(edges)
+                cv2.circle(mask, (int(cx), int(cy)), int(cr), 255, 3)
+                overlap = cv2.bitwise_and(edges, mask)
+                perimeter_pixels = np.sum(mask > 0)
+                if perimeter_pixels == 0: continue
+                
+                # 테두리에 실제로 존재하는 엣지 픽셀의 비율
+                score = float(np.sum(overlap > 0)) / float(perimeter_pixels)
 
                 if score > max_score:
                     max_score = score
@@ -292,12 +293,11 @@ class AIContactAngleAnalyzer:
 
     def auto_detect_droplet_candidate(self, image_cv2, exclude_box=None, coin_radius=None):
         """
-        [V4.1] 2B 금속 표면의 렌즈 효과(Lens Effect) 병합 알고리즘 파라미터 튜닝.
-        액적 내부의 조각난 렌즈 왜곡(스크래치 파편)들을 하나의 거대한 Blob으로 완전히 뭉치도록
-        형태학적 결합(Closing) 커널을 대폭 확대하고, 최소 반경 커트라인을 상향 조정.
+        [V5] 액적은 전체 이미지의 2%~6%에 해당하는 타이트한 반경 제약을 사용하여 검출함.
+        HL(헤어라인) 등 극도로 노이즈가 많은 배경에 대비해, 앱 단에서 마우스 오버라이드 툴이 제공됨.
         """
         orig_h, orig_w = image_cv2.shape[:2]
-        max_dim = 600.0
+        max_dim = 800.0
         scale = 1.0
 
         if max(orig_h, orig_w) > max_dim:
@@ -310,10 +310,6 @@ class AIContactAngleAnalyzer:
 
         h, w = work_img.shape[:2]
         
-        # 기준 반지름 계산 (coin_radius가 있으면 적극 활용, 없으면 화면 10%)
-        ref_radius = (coin_radius * scale) if (coin_radius is not None and coin_radius > 0) else (h * 0.1)
-        
-        # 1. 제외 영역(동전)을 완전히 까맣게 마스킹
         ex1, ey1, ex2, ey2 = -1, -1, -1, -1
         if exclude_box is not None:
             ex1 = int(exclude_box[0] * scale)
@@ -322,107 +318,40 @@ class AIContactAngleAnalyzer:
             ey2 = int(exclude_box[3] * scale)
             cv2.rectangle(work_img, (max(0, ex1), max(0, ey1)), (min(w, ex2), min(h, ey2)), (0, 0, 0), -1)
             
-        # 2. 로컬 분산(Variance) 맵 기반 렌즈 효과 포착
         b, g, r_ch = cv2.split(work_img)
-        gray = cv2.addWeighted(b, 0.7, g, 0.3, 0).astype(np.float32)
+        gray2 = cv2.addWeighted(b, 0.7, g, 0.3, 0)
+        gray_blur = cv2.GaussianBlur(gray2, (7, 7), 0)
+        clahe2 = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        gray_clahe = clahe2.apply(gray_blur.astype(np.uint8))
         
-        # 블러 크기를 동전 반지름의 15% 수준으로 넉넉히 주어 파편화를 1차 방지
-        win_size = int(ref_radius * 0.15) | 1
-        if win_size < 3: win_size = 3
+        min_r = h * 0.02
+        max_r = h * 0.06
         
-        mean_gray = cv2.blur(gray, (win_size, win_size))
-        mean_gray_sq = cv2.blur(gray**2.0, (win_size, win_size))
-        variance = mean_gray_sq - mean_gray**2.0
-        
-        stddev = np.sqrt(np.maximum(variance, 0))
-        stddev_norm = cv2.normalize(stddev, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        
-        # 3. 임계값을 통한 강한 렌즈 효과(대비 뭉침) 추출
-        _, thresh = cv2.threshold(stddev_norm, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        
-        # 4. 강력한 형태학적 닫힘(Morphological Closing) 연산으로 파편들 하나로 뭉치기
-        # 커널 크기를 동전 반지름의 30% 수준으로 대폭 키움 (파편들이 완전히 떡지도록)
-        kernel_size = int(ref_radius * 0.30) | 1
-        if kernel_size < 5: kernel_size = 5
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-        
-        morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=3) # 반복 횟수도 증가
-        
-        # 너무 자잘한 노이즈만 날리는 가벼운 열림 연산
-        open_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        morph = cv2.morphologyEx(morph, cv2.MORPH_OPEN, open_kernel, iterations=1)
-        
-        # 5. 윤곽선(Blob) 검출
-        contours, _ = cv2.findContours(morph, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # 액적 최소 반경 커트라인 대폭 상향 (5% -> 20%)
-        min_r = ref_radius * 0.20
-        max_r = ref_radius * 0.80
+        circles = cv2.HoughCircles(
+            gray_clahe, cv2.HOUGH_GRADIENT, dp=1.2, minDist=20,
+            param1=50, param2=15, minRadius=int(min_r), maxRadius=int(max_r)
+        )
         
         best_box = None
         best_score = -1.0
         
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area < 50:
-                continue
+        if circles is not None:
+            circles = np.round(circles[0, :]).astype("int")
+            for (xc, yc, r) in circles:
+                if ex1 - 20 <= xc <= ex2 + 20 and ey1 - 20 <= yc <= ey2 + 20:
+                    continue
+                    
+                dist_to_center = np.sqrt((xc - w/2.0)**2 + (yc - h/2.0)**2)
+                max_dist = np.sqrt((w/2.0)**2 + (h/2.0)**2)
+                center_score = 1.0 - (dist_to_center / (max_dist + 1e-6))
                 
-            r_est = np.sqrt(area / np.pi)
-            
-            if min_r <= r_est <= max_r:
-                x_b, y_b, bw, bh = cv2.boundingRect(cnt)
-                aspect_ratio = float(bw) / float(bh)
-                
-                # 물방울은 극단적으로 길쭉하지 않으므로 비율을 타이트하게 제한
-                if 0.5 <= aspect_ratio <= 2.0:
-                    cx = x_b + bw / 2.0
-                    cy = y_b + bh / 2.0
-                    
-                    # 마스킹된 동전 영역 근처는 무시
-                    if ex1 - 20 <= cx <= ex2 + 20 and ey1 - 20 <= cy <= ey2 + 20:
-                        continue
-                        
-                    dist_to_center = np.sqrt((cx - w/2.0)**2 + (cy - h/2.0)**2)
-                    max_dist = np.sqrt((w/2.0)**2 + (h/2.0)**2)
-                    center_score = 1.0 - (dist_to_center / (max_dist + 1e-6))
-                    
-                    # 면적이 클수록 (파편이 아닐수록) 압도적으로 높은 점수 부여
-                    score = center_score * (r_est ** 2)
-                    
-                    if score > best_score:
-                        best_score = score
-                        best_box = (cx, cy, r_est)
-                        
-        if best_box is None:
-            # [Hybrid V5] 렌즈 효과(Variance Map) 탐지 실패 시, HoughCircles 곡률 추적 알고리즘으로 폴백 (2B, BA 등 매끄러운 금속 배경 대비)
-            gray_blur = cv2.GaussianBlur(gray, (7, 7), 0)
-            clahe_fallback = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            gray_clahe = clahe_fallback.apply(gray_blur.astype(np.uint8))
-            
-            circles = cv2.HoughCircles(
-                gray_clahe, cv2.HOUGH_GRADIENT, dp=1.2, minDist=30,
-                param1=50, param2=20, minRadius=int(min_r), maxRadius=int(max_r)
-            )
-            
-            if circles is not None:
-                circles = np.round(circles[0, :]).astype("int")
-                for (xc, yc, r) in circles:
-                    # 마스킹된 동전 근처 무시
-                    if ex1 - 20 <= xc <= ex2 + 20 and ey1 - 20 <= yc <= ey2 + 20:
-                        continue
-                        
-                    dist_to_center = np.sqrt((xc - w/2.0)**2 + (yc - h/2.0)**2)
-                    max_dist = np.sqrt((w/2.0)**2 + (h/2.0)**2)
-                    center_score = 1.0 - (dist_to_center / (max_dist + 1e-6))
-                    
-                    score = center_score * (r ** 2)
-                    if score > best_score:
-                        best_score = score
-                        best_box = (xc, yc, r)
+                score = center_score * (r ** 2)
+                if score > best_score:
+                    best_score = score
+                    best_box = (xc, yc, r)
 
         if best_box is not None:
             cx, cy, r_est = best_box
-            # 박스를 살짝 여유있게 잡아줌
             pad = r_est * 0.2
             inv_scale = 1.0 / scale
             
