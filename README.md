@@ -11,10 +11,10 @@
 ### Architecture Diagram
 ```mermaid
 graph TD
-    A[Input Surface Image] --> B[deepdrop_sfe: SFE Engine]
-    A --> C[vsams: Roughness/Gloss Engine]
-    A --> D[src: 3D Curvature Engine]
-    B --> E[Streamlit Dashboard]
+    A["Input Surface Image"] --> B["deepdrop_sfe: SFE Engine"]
+    A --> C["vsams: Roughness/Gloss Engine"]
+    A --> D["src: 3D Curvature Engine"]
+    B --> E["Streamlit Dashboard"]
     C --> E
     D --> E
 ```
