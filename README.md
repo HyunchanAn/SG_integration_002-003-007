@@ -6,6 +6,32 @@
 
 본 프로젝트는 표면 자유 에너지(SFE) 분석, 표면 마감 상태(조도/광택도) 평가, 3D 지형 및 곡률 분석 기능을 하나의 인터페이스로 제공하는 통합 제어 솔루션입니다.
 
+## Technical Architecture & Workflow
+
+### Architecture Diagram
+```mermaid
+graph TD
+    A[Input Surface Image] --> B[deepdrop_sfe: SFE Engine]
+    A --> C[vsams: Roughness/Gloss Engine]
+    A --> D[src: 3D Curvature Engine]
+    B --> E[Streamlit Dashboard]
+    C --> E
+    D --> E
+```
+### Sequence Diagram
+```mermaid
+sequenceDiagram
+    participant User
+    participant UI as Streamlit
+    participant AI as AI Modules
+    User->>UI: Upload Surface Data
+    UI->>AI: Dispatch to Modules
+    AI->>AI: SFE / vsams / 3D Analysis
+    AI-->>UI: Return Metrics
+    UI-->>User: Display Dashboard
+```
+
+
 ## 아키텍처 및 구성
 
 프로젝트는 다음의 구조로 결합되어 구동됩니다:
