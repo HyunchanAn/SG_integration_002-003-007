@@ -73,6 +73,7 @@ class DepthAnythingV2Wrapper:
             
         # Real inference
         depth = self.model.infer_image(proc_img)
+        
         return depth
 
 # 테스트 블럭 (직접 실행 시)

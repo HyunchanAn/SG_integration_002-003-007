@@ -1,0 +1,6 @@
+-r requirements.txt
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# CPU-only PyTorch for Streamlit Cloud
+torch
+torchvision

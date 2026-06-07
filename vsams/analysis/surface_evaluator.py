@@ -113,7 +113,11 @@ class SurfaceEvaluator:
             A list containing the crop coordinates for [coin_box, reflection_box] if detected, else None.
         """
         orig_h, orig_w = img.shape[:2]
-        max_dim = 800.0
+        try:
+            import streamlit as st
+            max_dim = st.session_state.get("max_image_size") or float('inf')
+        except:
+            max_dim = 800.0
         scale = 1.0
         
         # Optimization: Downsample if image is too large to prevent HoughCircles hanging

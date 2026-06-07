@@ -72,6 +72,38 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
+# 런타임 동적 프로파일링 및 최적화 초기화
+# ---------------------------------------------------------------------------
+import torch
+
+def initialize_environment():
+    is_cloud = (not torch.cuda.is_available()) or (os.getenv("STREAMLIT_SERVER_MODE") == "cloud")
+    
+    if is_cloud:
+        torch.set_num_threads(1)
+        if "max_image_size" not in st.session_state:
+            st.session_state["max_image_size"] = 800.0
+        if "device" not in st.session_state:
+            st.session_state["device"] = "cpu"
+        if "use_fp16" not in st.session_state:
+            st.session_state["use_fp16"] = False
+    else:
+        available_cpus = os.cpu_count() or 4
+        torch.set_num_threads(max(1, available_cpus - 2)) 
+        if "max_image_size" not in st.session_state:
+            st.session_state["max_image_size"] = 2160.0  # 4K 등 원본 폭탄 방지용 하드 리밋
+        if "device" not in st.session_state:
+            st.session_state["device"] = "cuda"
+        if "use_fp16" not in st.session_state:
+            st.session_state["use_fp16"] = True
+        
+        if torch.cuda.is_available():
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+
+initialize_environment()
+
+# ---------------------------------------------------------------------------
 # CSS
 # ---------------------------------------------------------------------------
 st.markdown("""
@@ -577,6 +609,14 @@ with st.expander("STEP 1.  설정 및 이미지 등록" if lang == "ko" else "ST
     f_nonpolar = _uploaded.get("f_nonpolar")
     f_finish = _uploaded.get("f_finish")
     f_3d = _uploaded.get("f_3d") if do_3d else None
+
+    import gc
+    current_files_hash = hash(f"{f_polar.size if f_polar else 0}_{f_nonpolar.size if f_nonpolar else 0}_{f_finish.size if f_finish else 0}_{f_3d.size if f_3d else 0}")
+    if st.session_state.get("last_files_hash") != current_files_hash:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        st.session_state["last_files_hash"] = current_files_hash
 
     sigma_v = 2.0
     ref_len = 100.0

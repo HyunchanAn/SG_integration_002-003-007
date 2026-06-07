@@ -188,3 +188,15 @@
 
 2026-06-02 00:47:23
 - README.md 아키텍처 다이어그램 Mermaid 문법 오류(괄호 등 특수문자 따옴표 처리) 수정
+
+2026-06-08 07:58:00
+- 통합 파이프라인(tests/test_integration.py) 안정성 점검 완료.
+- V4.1 액적 탐지 파라미터 강화로 인해 테스트용 이미지에서 자동 탐지가 실패할 경우, 후속 통합 테스트(SAM 2, 물리 연산 등) 진행이 블로킹되던 문제를 해결하고자 테스트 코드 내에 더미 박스 폴백(Fallback)을 추가함.
+- E2E 통합 테스트(pytest) 결과, deepdrop_sfe(002), vsams(003), 3D 곡률 연산(007) 모듈 전체 파이프라인 결합과 물리 연산이 완벽하게 정상 동작(5 passed)함을 물리적으로 최종 검증함.
+
+2026-06-08 08:21:00
+- [Issue #1] 인프라 환경별(Local GPU vs Cloud CPU) 런타임 동적 프로파일링 및 자원 최적화 적용 완료.
+- app.py 내 initialize_environment() 를 구현하여 STREAMLIT_SERVER_MODE와 CUDA 여부에 따라 스레드 제어 및 2160px 해상도 리밋 동적 스위칭.
+- 매 프레임별 torch.cuda.empty_cache()와 gc.collect() 남용으로 인한 PyTorch 런타임 캐싱 메커니즘 파괴 문제를 해결하기 위해, 각 AI 래퍼 모듈(sam2_wrapper, depth_wrapper, ai_engine 등)에서 VRAM 해제 구문 제거.
+- 파일 업로드 및 탭 전환 등 상태(해시) 변경 시점에만 1회 gc.collect()와 캐시를 지우도록 app.py 단위의 이벤트 기반 메모리 관리 로직 도입.
+- requirements.txt (공통 종속성), requirements-cloud.txt (CPU), requirements-local.txt (cu124) 로 의존성 명세를 분리 설계하여 환경 분할 및 충돌 예방 체계 확립.

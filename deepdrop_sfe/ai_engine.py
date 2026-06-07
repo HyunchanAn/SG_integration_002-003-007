@@ -17,12 +17,21 @@ class AIContactAngleAnalyzer:
         # 1. 디바이스 자동 감지
         if device:
             self.device = device
-        elif torch.cuda.is_available():
-            self.device = "cuda"
-        elif torch.backends.mps.is_available():
-            self.device = "mps"
         else:
-            self.device = "cpu"
+            try:
+                import streamlit as st
+                st_device = st.session_state.get("device")
+            except:
+                st_device = None
+                
+            if st_device:
+                self.device = st_device
+            elif torch.cuda.is_available():
+                self.device = "cuda"
+            elif torch.backends.mps.is_available():
+                self.device = "mps"
+            else:
+                self.device = "cpu"
 
         # 2. 모델 아이디 결정 (하드웨어 및 환경에 따른 자동 선택)
         if model_id is None:
@@ -123,7 +132,11 @@ class AIContactAngleAnalyzer:
         [V2] V-SAMS에서 검증된 강건한 허프 변환(HoughCircles) 및 CLAHE 알고리즘을 사용하여 동전을 감지함.
         """
         orig_h, orig_w = image_cv2.shape[:2]
-        max_dim = 800.0
+        try:
+            import streamlit as st
+            max_dim = st.session_state.get("max_image_size") or float('inf')
+        except:
+            max_dim = 800.0
         scale = 1.0
         
         # Optimization: Downsample if image is too large
@@ -210,7 +223,11 @@ class AIContactAngleAnalyzer:
         형태학적 결합(Closing) 커널을 대폭 확대하고, 최소 반경 커트라인을 상향 조정.
         """
         orig_h, orig_w = image_cv2.shape[:2]
-        max_dim = 600.0
+        try:
+            import streamlit as st
+            max_dim = st.session_state.get("max_image_size") or float('inf')
+        except:
+            max_dim = 600.0
         scale = 1.0
 
         if max(orig_h, orig_w) > max_dim:
