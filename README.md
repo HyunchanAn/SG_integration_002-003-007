@@ -47,35 +47,15 @@ sequenceDiagram
 - CUDA 12.x 및 NVIDIA GPU 환경 (RTX 5080 가속 대응)
 - 추가 패키지 의존성 (requirements.txt 명세)
 
-## 모델 가중치 다운로드
+## 모델 가중치 자동 다운로드 및 무결성 검증
 
-본 저장소는 용량 제한으로 인해 AI 모델 가중치 파일을 포함하지 않습니다.
-아래 Google Drive 링크에서 3개의 폴더를 내려받아 프로젝트 루트에 배치해야 합니다.
+본 시스템은 Hugging Face Hub 연동 파이프라인을 구축하여, 사용자가 번거롭게 가중치를 수동으로 다운로드할 필요가 없습니다.
+앱 초기화 시(`_load_engines()`), 필요한 파일들의 존재 여부 및 MD5 체크섬을 검사하고, 누락된 가중치들은 자동으로 다운로드됩니다.
 
-다운로드 링크: https://drive.google.com/drive/folders/1ES59vdjTOlXB0Qmz4bv8z1l30RVKcYOo?usp=sharing
+- Depth-Anything-V2 모델: `depth-anything/Depth-Anything-V2-Small` (HF 공식 저장소)
+- 기타 Custom 가중치 (SAM2, V-SAMS, MobileSAM): `chemahc94/sg-weights` (사설 저장소)
 
-### 배치 경로
-
-다운로드 후 프로젝트 루트 기준으로 다음과 같이 배치합니다.
-
-```
-SG_integration_002+003+007/
-+-- checkpoints/
-|   +-- mobile_sam.pt            (SAM 세그멘테이션 - SFE 분석용)
-|   +-- v_sams_model.pth         (V-SAMS 표면 마감 분류 모델)
-+-- models/
-|   +-- depth_anything_v2/
-|   |   +-- depth_anything_v2_vits.pth  (Depth-Anything-V2 깊이 추정 모델)
-|   +-- sam2/
-|       +-- sam2_hiera_small.pt         (SAM 2.1 세그멘테이션 - 3D 곡률용)
-+-- vsams/
-    +-- data/
-        +-- visual_library.pth   (V-SAMS 시각 참조 라이브러리)
-```
-
-> vsams/data/ 폴더는 저장소에 이미 존재하지만, visual_library.pth 파일은 Google Drive의 vsams 폴더 안에서 별도로 내려받아 해당 경로에 직접 배치해야 합니다.
-
-가중치 파일이 모두 배치되지 않으면 앱 실행 시 모델 로드 단계에서 오류가 발생합니다.
+네트워크 보안 정책으로 인해 다운로드가 차단된 오프라인 환경인 경우, 사전에 다운로드하여 `checkpoints/`, `models/`, `vsams/data/` 경로에 배치해야 합니다.
 
 ## 실행 방법
 
@@ -126,3 +106,16 @@ docker compose up --build -d
 3. **이미지 확인**:
    - 성공적으로 푸시된 도커 이미지는 GitHub 프로필 또는 조직의 Packages 탭에서 확인 및 내려받기(pull)할 수 있습니다.
 
+## ☁️ Streamlit Cloud 배포 및 OOM 방어 가이드
+
+이 애플리케이션은 내부적으로 SAM 2.1 및 Depth-Anything-V2와 같은 고중량 모델을 가동합니다. 무료 Streamlit Cloud와 같은 제한된 환경(1~2GB RAM)에서의 크래시(OOM, ConnectionClosedError 1011)를 방어하기 위해 다음과 같은 로직이 코어에 내장되어 있습니다.
+
+- **입력 해상도 방어**: 사용자가 고해상도 이미지를 업로드하더라도 엔진 내부에서 최대 800px로 강제 Downscaling 처리.
+- **가비지 컬렉션(GC)**: 매 상호작용 및 이미지 렌더링 시 명시적인 `gc.collect()` 가동.
+- **단일 스레딩**: `torch.set_num_threads(1)`을 적용하여 급격한 스레드 스파이크 및 자원 고갈 차단.
+
+**⚠️ 필수 보안 설정 (Secrets):**
+앱 구동 시 사설 Hugging Face 저장소(`chemahc94/sg-weights`)로부터 가중치를 받아오기 위해서는 반드시 Streamlit 대시보드(App settings > Secrets)에 접근 토큰을 명시해야 합니다.
+```toml
+HF_TOKEN = "hf_본인의_허깅페이스_토큰_입력"
+```

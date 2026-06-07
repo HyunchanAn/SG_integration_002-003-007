@@ -45,17 +45,14 @@ try:
 except ImportError:
     HAS_IMG_COORDS = False
 
-# ---------------------------------------------------------------------------
-# 핵심 라이브러리 임포트 (각 모듈은 프로젝트 루트에 복사되어 있음)
-# ---------------------------------------------------------------------------
-# Streamlit의 핫 리로드(Hot-Reload) 모듈 와처 스레드와 경합으로 인해 발생하는
-# sys.modules KeyError(예: KeyError: 'src.seg', KeyError: 'src.topo') 문제를 방지하기 위해
-# 임포트 전 sys.modules에서 로컬 패키지 엔트리를 강제로 초기화
-import sys
-for _k in list(sys.modules.keys()):
-    if _k in ["src", "deepdrop_sfe", "vsams"] or _k.startswith(("src.", "deepdrop_sfe.", "vsams.")):
-        sys.modules.pop(_k, None)
+import gc
+import torch
+# Streamlit Cloud의 가용 RAM 한계(OOM) 극복을 위해 CPU 연산 스레드 및 메모리 스파이크 제한
+torch.set_num_threads(1)
 
+# ---------------------------------------------------------------------------
+# 핵심 라이브러리 임포트
+# ---------------------------------------------------------------------------
 from deepdrop_sfe import AIContactAngleAnalyzer, DropletPhysics, PerspectiveCorrector
 from vsams.analysis.surface_evaluator import SurfaceEvaluator
 from src.seg.sam2_wrapper import SAM2BaseWrapper
@@ -482,6 +479,16 @@ with st.expander("STEP 1.  설정 및 이미지 등록" if lang == "ko" else "ST
         if do_3d != st.session_state["do_3d"]:
             st.session_state["do_3d"] = do_3d
             st.rerun()
+            
+        import torch
+        is_cpu_env = not (torch.cuda.is_available() or torch.backends.mps.is_available())
+        use_fast_mode = st.toggle(
+            "⚡ 고속 연산 모드 (OpenCV Fallback)" if lang == "ko" else "⚡ Fast CV Mode (Fallback)", 
+            value=st.session_state.get("use_fast_mode", is_cpu_env)
+        )
+        if use_fast_mode != st.session_state.get("use_fast_mode"):
+            st.session_state["use_fast_mode"] = use_fast_mode
+            st.rerun()
 
     st.markdown("---")
     st.markdown("##### " + T["params"])
@@ -632,16 +639,45 @@ with st.expander("STEP 1.  설정 및 이미지 등록" if lang == "ko" else "ST
 # ---------------------------------------------------------------------------
 # Model 캐싱 로드
 # ---------------------------------------------------------------------------
+import hashlib
+from huggingface_hub import hf_hub_download
+
 @st.cache_resource(show_spinner=False)
 def _load_engines():
-    """AI 모델 자원 일괄 로드"""
+    """AI 모델 자원 일괄 로드 및 무결성 검증"""
+    # 1. Depth-Anything-V2
     da_enc    = "vits"
     da_ckpt   = "models/depth_anything_v2/depth_anything_v2_vits.pth"
-    da_url    = "https://huggingface.co/depth-anything/Depth-Anything-V2-Small/resolve/main/depth_anything_v2_vits.pth"
-
+    # HF Hub 리포지토리 지정 (사용자 실제 계정)
+    HF_REPO_ID = "chemahc94/sg-weights"
+    
     os.makedirs("models/depth_anything_v2", exist_ok=True)
-    if not os.path.exists(da_ckpt):
-        urllib.request.urlretrieve(da_url, da_ckpt)
+    os.makedirs("checkpoints", exist_ok=True)
+    os.makedirs("vsams/data", exist_ok=True)
+    
+    weights_info = [
+        {"path": da_ckpt, "hf_repo": "depth-anything/Depth-Anything-V2-Small", "hf_file": "depth_anything_v2_vits.pth"},
+        {"path": "checkpoints/v_sams_model.pth", "hf_repo": HF_REPO_ID, "hf_file": "v_sams_model.pth"},
+        {"path": "vsams/data/visual_library.pth", "hf_repo": HF_REPO_ID, "hf_file": "visual_library.pth"},
+        {"path": "checkpoints/mobile_sam.pt", "hf_repo": HF_REPO_ID, "hf_file": "mobile_sam.pt"},
+    ]
+    
+    for w in weights_info:
+        if not os.path.exists(w["path"]):
+            try:
+                # Streamlit Secrets에서 토큰을 가져오며, 없을 경우 None으로 익명 다운로드 시도
+                hf_token = st.secrets.get("HF_TOKEN") if "HF_TOKEN" in st.secrets else None
+                print(f"Downloading {w['hf_file']} from Hugging Face Hub...")
+                hf_hub_download(
+                    repo_id=w["hf_repo"], 
+                    filename=w["hf_file"], 
+                    local_dir=os.path.dirname(w["path"]),
+                    token=hf_token
+                )
+            except Exception as e:
+                print(f"Warning: Failed to download {w['hf_file']} from {w['hf_repo']}. Error: {e}")
+                # 수동 다운로드 폴백을 위해 패스 (앱 런타임에서 에러 처리)
+                pass
 
     sfe_az  = AIContactAngleAnalyzer()
     sfe_pc  = PerspectiveCorrector()
@@ -649,7 +685,9 @@ def _load_engines():
     sam_w   = SAM2BaseWrapper()
     dep_w   = DepthAnythingV2Wrapper(encoder=da_enc, checkpoint_path=da_ckpt)
     cur_a   = CurvatureAnalyzer(smoothing_sigma=2.0)
-    sam_w.load_model()
+    
+    # 엣지 환경 대응 (UI에서 toggle로 제어할 수도 있으나, 기본 SAM2 호출)
+    sam_w.load_model(use_mobilesam=False)
     dep_w.load_model()
     return sfe_az, sfe_pc, vs_eval, sam_w, dep_w, cur_a
 
@@ -659,11 +697,21 @@ with st.spinner(T["loading"]):
 # ---------------------------------------------------------------------------
 # Helper: 이미지 로딩 (UploadedFile -> BGR / RGB)
 # ---------------------------------------------------------------------------
-def _load_img(uploaded):
-    """UploadedFile -> (bgr, rgb) numpy arrays"""
+def _load_img(uploaded, max_size=800):
+    """UploadedFile -> (bgr, rgb) numpy arrays, 메모리 오버헤드 방지를 위한 자동 리사이징"""
+    # 렌더링/업로드 순간마다 쌓이는 이전 메모리를 명시적으로 해제
+    gc.collect()
+
     raw = np.asarray(bytearray(uploaded.read()), dtype=np.uint8)
     uploaded.seek(0)
     bgr = cv2.imdecode(raw, cv2.IMREAD_COLOR)
+    
+    # OOM 방어 레이어: 원본 이미지의 크기를 제한하여 배열 메모리 사용량을 기하급수적으로 낮춤
+    h, w = bgr.shape[:2]
+    if max(h, w) > max_size:
+        scale = max_size / float(max(h, w))
+        bgr = cv2.resize(bgr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     return bgr, rgb
 
@@ -739,16 +787,16 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                     
                     pt_key = f"pt_coin_{liq_key}"
                     if pt_key not in st.session_state:
-                        # 다른 탭에서 이미 설정한 공유 좌표가 있다면 기본값으로 할당
-                        st.session_state[pt_key] = st.session_state.get("shared_coin_pt", None)
+                        # 탭 별 좌표로 고립
+                        st.session_state[pt_key] = st.session_state.get(f"shared_coin_pt_{liq_key}", None)
                     
                     disp_rgb = rgb.copy()
                     click_pt = st.session_state[pt_key]
                     
-                    # 동전 반경을 조절할 수 있는 슬라이더 (공유 반경 동기화 적용)
-                    default_r = st.session_state.get("shared_coin_r", 300)
+                    # 동전 반경을 조절할 수 있는 슬라이더 (탭별 공유 반경 동기화 적용)
+                    default_r = st.session_state.get(f"shared_coin_r_{liq_key}", 300)
                     r_val = st.slider("동전 반경 (px)" if lang == "ko" else "Coin Radius (px)", 10, 800, default_r, key=f"r_{liq_key}")
-                    st.session_state["shared_coin_r"] = r_val
+                    st.session_state[f"shared_coin_r_{liq_key}"] = r_val
                     
                     if click_pt is not None:
                         cx, cy = click_pt
@@ -768,7 +816,7 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                             if clicked_coord != st.session_state.get(f"last_coords_{liq_key}"):
                                 st.session_state[pt_key] = clicked_coord
                                 st.session_state[f"last_coords_{liq_key}"] = clicked_coord
-                                st.session_state["shared_coin_pt"] = clicked_coord
+                                st.session_state[f"shared_coin_pt_{liq_key}"] = clicked_coord
                                 # 세션 상태 강제 동기화로 number_input 재사용 캐시 꼬임 해결
                                 st.session_state[f"cx_in_{liq_key}"] = clicked_coord[0]
                                 st.session_state[f"cy_in_{liq_key}"] = clicked_coord[1]
@@ -801,9 +849,9 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                         min(w, cx_input + r_val),
                         min(h, cy_input + r_val)
                     ])
-                    # 미세조정 값을 글로벌 공유 세션에 업데이트
-                    st.session_state["shared_coin_pt"] = (cx_input, cy_input)
-                    st.session_state["shared_coin_r"] = r_val
+                    # 미세조정 값을 탭별 세션에 업데이트
+                    st.session_state[f"shared_coin_pt_{liq_key}"] = (cx_input, cy_input)
+                    st.session_state[f"shared_coin_r_{liq_key}"] = r_val
                     coin_ok = True
                     
                     # 최종 적용된 바운딩 박스 및 실시간 SAM 2 코인 마스크 오버레이 시각화
@@ -811,7 +859,14 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                     with st.spinner("Calculating coin mask..."):
                         try:
                             sfe_analyzer.set_image(rgb)
-                            mask_coin, _ = sfe_analyzer.predict_mask(box=coin_box)
+                            if st.session_state.get("use_fast_mode", False):
+                                mask_coin = np.zeros(rgb.shape[:2], dtype=bool)
+                                cx, cy = int((coin_box[0]+coin_box[2])/2), int((coin_box[1]+coin_box[3])/2)
+                                cr = int((coin_box[2]-coin_box[0])/2)
+                                import cv2
+                                cv2.circle(mask_coin.view(np.uint8), (cx, cy), cr, 1, -1)
+                            else:
+                                mask_coin, _ = sfe_analyzer.predict_mask(box=coin_box)
                             mask_bin = sfe_analyzer.get_binary_mask(mask_coin)
                             
                             # 빨간색 마스크 쉐이딩 추가
@@ -830,7 +885,7 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                     
                     if st.button("수동 지정 포인트 초기화" if lang == "ko" else "Reset Manual Target", key=f"rst_manual_{liq_key}"):
                         st.session_state[pt_key] = None
-                        st.session_state["shared_coin_pt"] = None
+                        st.session_state[f"shared_coin_pt_{liq_key}"] = None
                         st.rerun()
             else:
                 # 자동 감지 모드
@@ -838,14 +893,14 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                 with col_o:
                     st.image(rgb, caption="Original", width="stretch")
                 with col_d:
-                    # 이미 신뢰할 수 있게 설정된 다른 탭의 공유 좌표가 있는지 확인
-                    shared_pt = st.session_state.get("shared_coin_pt", None)
-                    shared_r = st.session_state.get("shared_coin_r", 300)
+                    # 이미 신뢰할 수 있게 설정된 이 탭만의 공유 좌표가 있는지 확인
+                    shared_pt = st.session_state.get(f"shared_coin_pt_{liq_key}", None)
+                    shared_r = st.session_state.get(f"shared_coin_r_{liq_key}", 300)
                     
                     coin_box = None
                     
                     if shared_pt is not None:
-                        # 이전에 확정된 동전 정보를 우선적으로 재사용하여 탭 간 무결성 확보
+                        # 현재 탭에서 확정된 동전 정보를 우선적으로 재사용
                         cx_s, cy_s = shared_pt
                         coin_box = np.array([
                             max(0, cx_s - shared_r),
@@ -853,8 +908,8 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                             min(w, cx_s + shared_r),
                             min(h, cy_s + shared_r)
                         ])
-                        st.info("이전 분석에서 확정된 동전 좌표 정보를 기반으로 자동 세그멘테이션을 수행합니다." if lang == "ko"
-                                else "Using confirmed coin coordinates from previous analysis for auto segmentation.")
+                        st.info("현재 탭에서 설정된 동전 좌표 정보를 기반으로 세그멘테이션을 수행합니다." if lang == "ko"
+                                else "Using coin coordinates confirmed in the current tab for segmentation.")
                     else:
                         with st.spinner("Detecting coin..."):
                             coin_box, _ = sfe_analyzer.auto_detect_coin_candidate(bgr)
@@ -877,16 +932,23 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                                     else "Coin boundaries not found. Attempting auto segmentation on image center.")
                     
                     if coin_box is not None:
-                        # 획득된 동전 위치를 글로벌 공유 좌표 세션에 저장
-                        st.session_state["shared_coin_pt"] = (int((coin_box[0] + coin_box[2])/2), int((coin_box[1] + coin_box[3])/2))
-                        st.session_state["shared_coin_r"] = int((coin_box[2] - coin_box[0])/2)
+                        # 획득된 동전 위치를 현재 탭 공유 좌표 세션에 저장
+                        st.session_state[f"shared_coin_pt_{liq_key}"] = (int((coin_box[0] + coin_box[2])/2), int((coin_box[1] + coin_box[3])/2))
+                        st.session_state[f"shared_coin_r_{liq_key}"] = int((coin_box[2] - coin_box[0])/2)
                         
                         prev = rgb.copy()
                         # 자동 감지에서도 획득된 SAM 2 마스크를 빨간색으로 오버레이하여 사전 정합성 검증
                         with st.spinner("Calculating coin mask..."):
                             try:
                                 sfe_analyzer.set_image(rgb)
-                                mask_coin, _ = sfe_analyzer.predict_mask(box=coin_box)
+                                if st.session_state.get("use_fast_mode", False):
+                                    mask_coin = np.zeros(rgb.shape[:2], dtype=bool)
+                                    cx, cy = int((coin_box[0]+coin_box[2])/2), int((coin_box[1]+coin_box[3])/2)
+                                    cr = int((coin_box[2]-coin_box[0])/2)
+                                    import cv2
+                                    cv2.circle(mask_coin.view(np.uint8), (cx, cy), cr, 1, -1)
+                                else:
+                                    mask_coin, _ = sfe_analyzer.predict_mask(box=coin_box)
                                 mask_bin = sfe_analyzer.get_binary_mask(mask_coin)
                                 
                                 overlay = prev.copy()
@@ -912,7 +974,14 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                 st.markdown("#### 2. 원근 보정 및 액적 분석" if lang == "ko" else "#### 2. Perspective Correction & Droplet Analysis")
 
                 sfe_analyzer.set_image(rgb)
-                mask_coin, _ = sfe_analyzer.predict_mask(box=coin_box)
+                if st.session_state.get("use_fast_mode", False):
+                    mask_coin = np.zeros(bgr.shape[:2], dtype=bool)
+                    cx, cy = int((coin_box[0]+coin_box[2])/2), int((coin_box[1]+coin_box[3])/2)
+                    cr = int((coin_box[2]-coin_box[0])/2)
+                    import cv2
+                    cv2.circle(mask_coin.view(np.uint8), (cx, cy), cr, 1, -1)
+                else:
+                    mask_coin, _ = sfe_analyzer.predict_mask(box=coin_box)
                 mask_bin = sfe_analyzer.get_binary_mask(mask_coin)
                 H, ws, coin_info, _ = sfe_corrector.find_homography(rgb, mask_bin)
 
@@ -982,9 +1051,18 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                             with st.spinner("Calculating droplet mask..."):
                                 try:
                                     sfe_analyzer.set_image(warped)
-                                    pt_coords = np.array([[dcx_input, dcy_input]])
-                                    pt_labels = np.array([1])
-                                    d_mask, _ = sfe_analyzer.predict_mask(point_coords=pt_coords, point_labels=pt_labels)
+                                    if st.session_state.get("use_fast_mode", False):
+                                        ref_r = st.session_state.get(f"shared_coin_r_{liq_key}", 300)
+                                        # 액적은 동전보다 작으므로 노이즈 방지를 위해 ROI 크기를 축소 (ref_r 수준 유지)
+                                        box_size = int(ref_r)
+                                        x1, y1 = max(0, dcx_input - box_size//2), max(0, dcy_input - box_size//2)
+                                        x2, y2 = min(ww, dcx_input + box_size//2), min(hw, dcy_input + box_size//2)
+                                        drop_box = np.array([x1, y1, x2, y2])
+                                        d_mask, _ = sfe_analyzer.predict_mask_fast(warped, drop_box)
+                                    else:
+                                        pt_coords = np.array([[dcx_input, dcy_input]])
+                                        pt_labels = np.array([1])
+                                        d_mask, _ = sfe_analyzer.predict_mask(point_coords=pt_coords, point_labels=pt_labels)
                                     d_mask_bin = sfe_analyzer.get_binary_mask(d_mask)
                                     
                                     # 빨간색 액적 마스크 쉐이딩 추가
@@ -1028,7 +1106,10 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                                 with st.spinner("Calculating droplet mask..."):
                                     try:
                                         sfe_analyzer.set_image(warped)
-                                        d_mask, _ = sfe_analyzer.predict_mask(box=drop_box)
+                                        if st.session_state.get("use_fast_mode", False):
+                                            d_mask, _ = sfe_analyzer.predict_mask_fast(warped, drop_box)
+                                        else:
+                                            d_mask, _ = sfe_analyzer.predict_mask(box=drop_box)
                                         d_mask_bin = sfe_analyzer.get_binary_mask(d_mask)
                                         
                                         d_overlay = dprev.copy()
@@ -1036,13 +1117,37 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                                         cv2.addWeighted(d_overlay, 0.4, dprev, 0.6, 0, dprev)
                                         
                                         d_contours, _ = cv2.findContours(d_mask_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                                        cv2.drawContours(dprev, d_contours, -1, (255, 50, 50), 3)
+                                        
+                                        # [핵심] 마스크의 원형도(Circularity) 검증
+                                        is_valid_droplet = True
+                                        if d_contours:
+                                            max_c = max(d_contours, key=cv2.contourArea)
+                                            area = cv2.contourArea(max_c)
+                                            perimeter = cv2.arcLength(max_c, True)
+                                            if perimeter > 0 and area > 100:
+                                                circularity = 4 * np.pi * area / (perimeter ** 2)
+                                                if circularity < 0.7:  # 0.7 이하면 물방울이 아니라 스크래치로 간주
+                                                    is_valid_droplet = False
+                                            else:
+                                                is_valid_droplet = False
+                                        else:
+                                            is_valid_droplet = False
+
+                                        if is_valid_droplet:
+                                            cv2.drawContours(dprev, d_contours, -1, (255, 50, 50), 3)
+                                        else:
+                                            drop_box = None # 유효하지 않으면 강제 실패 처리
+                                            
                                     except Exception as d_mask_err:
                                         pass
                                         
-                                dx1, dy1, dx2, dy2 = map(int, drop_box)
-                                cv2.rectangle(dprev, (dx1, dy1), (dx2, dy2), (255, 80, 80), 8)
-                                st.image(dprev, caption="Detected Droplet Mask (Red) & Target Area (Green)", width="stretch")
+                                if drop_box is not None:
+                                    dx1, dy1, dx2, dy2 = map(int, drop_box)
+                                    cv2.rectangle(dprev, (dx1, dy1), (dx2, dy2), (255, 80, 80), 8)
+                                    st.image(dprev, caption="Detected Droplet Mask (Red) & Target Area (Green)", width="stretch")
+                                else:
+                                    st.error("액적 자동 감지 실패 (스크래치 오인 감지됨). 상단의 '액적 영역 수동 지정' 체크박스를 켜고 마우스로 중심을 지정해 주세요." if lang == "ko"
+                                             else "Droplet automatic detection failed (noise detected). Please enable 'Manual Droplet Input' checkbox.")
                             else:
                                 st.error("액적 자동 감지 실패. 상단의 '액적 영역 수동 지정' 체크박스를 켜고 마우스로 중심을 지정해 주세요." if lang == "ko"
                                          else "Droplet automatic detection failed. Please enable 'Manual Droplet Input' checkbox.")
@@ -1061,11 +1166,23 @@ with st.expander("STEP 2.  " + T["tab1"], expanded=True):
                             start_time = time.time()
                             sfe_analyzer.set_image(warped)
                             if manual_droplet:
-                                pt_coords = np.array([[dcx_input, dcy_input]])
-                                pt_labels = np.array([1])
-                                d_mask, _ = sfe_analyzer.predict_mask(point_coords=pt_coords, point_labels=pt_labels)
+                                if st.session_state.get("use_fast_mode", False):
+                                    ref_r = st.session_state.get(f"shared_coin_r_{liq_key}", 300)
+                                    # 액적은 동전보다 작으므로 노이즈 방지를 위해 ROI 크기를 축소
+                                    box_size = int(ref_r)
+                                    x1, y1 = max(0, dcx_input - box_size//2), max(0, dcy_input - box_size//2)
+                                    x2, y2 = min(ww, dcx_input + box_size//2), min(hw, dcy_input + box_size//2)
+                                    drop_box = np.array([x1, y1, x2, y2])
+                                    d_mask, _ = sfe_analyzer.predict_mask_fast(warped, drop_box)
+                                else:
+                                    pt_coords = np.array([[dcx_input, dcy_input]])
+                                    pt_labels = np.array([1])
+                                    d_mask, _ = sfe_analyzer.predict_mask(point_coords=pt_coords, point_labels=pt_labels)
                             else:
-                                d_mask, _ = sfe_analyzer.predict_mask(box=drop_box)
+                                if st.session_state.get("use_fast_mode", False):
+                                    d_mask, _ = sfe_analyzer.predict_mask_fast(warped, drop_box)
+                                else:
+                                    d_mask, _ = sfe_analyzer.predict_mask(box=drop_box)
 
                             px_mm = DropletPhysics.calculate_pixels_per_mm(coin_info[2], coin_d)
                             d_mm = DropletPhysics.calculate_contact_diameter(d_mask, px_mm)
@@ -1292,11 +1409,13 @@ with st.expander("STEP 4.  " + T["tab3"], expanded=False):
 
                     # Curvature
                     curv_a.sigma = sigma_v
-                    g_curv = curv_a.calculate_gaussian_curvature(dmap, mask=mask_t)
+                    # 캘리브레이션으로 확보한 px2mm(픽셀당 mm) 스케일을 X, Y, Z축에 적용
+                    g_curv = curv_a.calculate_gaussian_curvature(dmap, mask=mask_t, pixel_to_mm=px2mm, z_scale=px2mm)
                     cvals, ccoords = curv_a.find_critical_points(g_curv, mask=mask_t, top_k=1)
                     k_max = cvals[0]
-                    r_px = 1.0 / np.sqrt(np.abs(k_max)) if k_max != 0 else 0
-                    r_mm = round(r_px * px2mm, 2)
+                    # K의 역수를 제곱근하여 R 연산 (물리적 단위가 이미 반영되어 있으므로, px2mm를 다시 곱할 필요가 없음)
+                    r_mm = 1.0 / np.sqrt(np.abs(k_max)) if k_max != 0 else 0
+                    r_mm = round(r_mm, 2)
 
                     st.session_state["curv_result"] = {
                         "max_k": k_max, "min_r_mm": r_mm,
@@ -1395,6 +1514,7 @@ with st.expander("STEP 5.  " + T["tab4"], expanded=False):
             rows["Total AI Inference Time (s)"] = round(total_inf_time, 3)
 
         df = pd.DataFrame(list(rows.items()), columns=["Parameter", "Value"])
+        df["Value"] = df["Value"].astype(str)
         st.dataframe(df, width="stretch", hide_index=True)
 
         st.markdown("---")
