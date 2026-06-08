@@ -21,8 +21,8 @@ WORKDIR /app
 # Copy requirements.txt
 COPY requirements.txt .
 
-# Install PyTorch Nightly for CUDA 12.8 support matching RTX 5080
-RUN pip install --no-cache-dir --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+# Install PyTorch for CUDA 12.4 support
+RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu124
 
 # Install other requirements
 RUN pip install --no-cache-dir -r requirements.txt
