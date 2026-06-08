@@ -200,3 +200,9 @@
 - 매 프레임별 torch.cuda.empty_cache()와 gc.collect() 남용으로 인한 PyTorch 런타임 캐싱 메커니즘 파괴 문제를 해결하기 위해, 각 AI 래퍼 모듈(sam2_wrapper, depth_wrapper, ai_engine 등)에서 VRAM 해제 구문 제거.
 - 파일 업로드 및 탭 전환 등 상태(해시) 변경 시점에만 1회 gc.collect()와 캐시를 지우도록 app.py 단위의 이벤트 기반 메모리 관리 로직 도입.
 - requirements.txt (공통 종속성), requirements-cloud.txt (CPU), requirements-local.txt (cu124) 로 의존성 명세를 분리 설계하여 환경 분할 및 충돌 예방 체계 확립.
+
+2026-06-08 13:58:00
+- [Issue #2] 고속 연산 모드(OpenCV) 백엔드 인터락(Interlock) 구현 완료.
+- app.py의 initialize_environment()에서 클라우드(is_cloud)임이 판별될 경우, 자원 초과를 방지하기 위해 st.session_state["use_fast_mode"] = True 로 강제 덮어쓰도록(Override) 구현.
+- UI 토글(st.toggle)을 disabled 상태로 고정하여 사용자의 우회 시도를 원천 차단.
+- (참고) Issue #2의 나머지 과제(VRAM 초기화 재설계, 해상도 Hard Limit 설정, 의존성 모듈 분리)는 이전에 Issue #1 처리 중 모두 반영되었으므로 최종 Issue #2 Close.

@@ -84,6 +84,10 @@ def initialize_environment():
             st.session_state["device"] = "cpu"
         if "use_fp16" not in st.session_state:
             st.session_state["use_fp16"] = False
+        
+        # 클라우드/CPU 환경 인터락: 무조건 고속 연산 모드 고정
+        st.session_state["use_fast_mode"] = True
+        st.session_state["is_cloud"] = True
     else:
         available_cpus = os.cpu_count() or 4
         torch.set_num_threads(max(1, available_cpus - 2)) 
@@ -481,11 +485,18 @@ with st.expander("STEP 1.  설정 및 이미지 등록" if lang == "ko" else "ST
             st.rerun()
             
         import torch
-        is_cpu_env = not (torch.cuda.is_available() or torch.backends.mps.is_available())
+        is_cloud_env = st.session_state.get("is_cloud", False)
+        
         use_fast_mode = st.toggle(
             "⚡ 고속 연산 모드 (OpenCV Fallback)" if lang == "ko" else "⚡ Fast CV Mode (Fallback)", 
-            value=st.session_state.get("use_fast_mode", is_cpu_env)
+            value=st.session_state.get("use_fast_mode", True if is_cloud_env else False),
+            disabled=is_cloud_env,
+            help="클라우드/CPU 자원 제약 환경에서는 메모리 초과 방지를 위해 OpenCV 고속 연산 모드로 고정됩니다." if is_cloud_env else "딥러닝 모델 대신 전통적 비전 연산(OpenCV)을 사용하여 VRAM을 아끼고 속도를 극대화합니다."
         )
+        
+        # UI 우회 공격 방지 및 상태 강제 동기화
+        if is_cloud_env:
+            use_fast_mode = True
         if use_fast_mode != st.session_state.get("use_fast_mode"):
             st.session_state["use_fast_mode"] = use_fast_mode
             st.rerun()
