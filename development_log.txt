@@ -206,3 +206,6 @@
 - app.py의 initialize_environment()에서 클라우드(is_cloud)임이 판별될 경우, 자원 초과를 방지하기 위해 st.session_state["use_fast_mode"] = True 로 강제 덮어쓰도록(Override) 구현.
 - UI 토글(st.toggle)을 disabled 상태로 고정하여 사용자의 우회 시도를 원천 차단.
 - (참고) Issue #2의 나머지 과제(VRAM 초기화 재설계, 해상도 Hard Limit 설정, 의존성 모듈 분리)는 이전에 Issue #1 처리 중 모두 반영되었으므로 최종 Issue #2 Close.
+
+2026-06-08 16:16:00
+- GitHub Release(v2.1.0) 생성 완료. 프로젝트 안정화 및 마일스톤 달성을 기록함.
