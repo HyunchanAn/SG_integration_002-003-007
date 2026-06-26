@@ -81,11 +81,7 @@ class SurfaceEvaluator:
 
         # 4. Perform core physical evaluation
         try:
-            ra_val = self._estimate_roughness(coin_img, ref_img)
-            ra_val = max(0.0, min(1.0, float(ra_val)))
-
-            gloss_val = self._estimate_gloss(coin_img, ref_img)
-            gloss_val = max(0.0, float(gloss_val))
+            ra_val, gloss_val = self._estimate_roughness_and_gloss(coin_img, ref_img)
 
             return {
                 "roughness": ra_val,
@@ -93,7 +89,6 @@ class SurfaceEvaluator:
                 "has_reflection": True,
                 "coin_box": coin_box,
                 "ref_box": ref_box,
-                "predicted_label": self._map_to_label(ra_val, gloss_val),
             }
         except Exception as e:
             return {
@@ -113,9 +108,12 @@ class SurfaceEvaluator:
             A list containing the crop coordinates for [coin_box, reflection_box] if detected, else None.
         """
         orig_h, orig_w = img.shape[:2]
+        max_dim = 800.0
         try:
             import streamlit as st
-            max_dim = st.session_state.get("max_image_size") or float('inf')
+            from streamlit.runtime.scriptrunner import get_script_run_ctx
+            if get_script_run_ctx() is not None:
+                max_dim = st.session_state.get("max_image_size") or 800.0
         except:
             max_dim = 800.0
         scale = 1.0
@@ -229,89 +227,62 @@ class SurfaceEvaluator:
         except Exception:
             return np.array([])
 
-    def _estimate_roughness(self, coin_img: np.ndarray, ref_img: np.ndarray) -> float:
-        """Calculates surface roughness (Ra) with adaptive grain filtering.
-
-        Args:
-            coin_img: Bounded reference coin image.
-            ref_img: Bounded target reflection image on the steel surface.
-
-        Returns:
-            A floating-point spatial roughness value mapped between 0.0 and 1.0.
-        """
+    def _estimate_roughness_and_gloss(self, coin_img: np.ndarray, ref_img: np.ndarray) -> tuple[float, float]:
+        """Calculates surface roughness (Ra) and gloss using directionality and sharpness ratios."""
         gray_coin = cv2.cvtColor(coin_img, cv2.COLOR_BGR2GRAY)
         gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
 
-        # 1. Perform a rough pre-calculation of gloss contrast
-        std_coin = float(np.std(gray_coin))  # type: ignore[arg-type]
-        std_ref = float(np.std(gray_ref))  # type: ignore[arg-type]
-        temp_gloss = (std_ref / (std_coin + 1e-6)) * 600.0
+        # Preprocessing to reduce noise
+        gray_coin = cv2.GaussianBlur(gray_coin, (3, 3), 0)
+        gray_ref = cv2.GaussianBlur(gray_ref, (3, 3), 0)
 
-        # 2. Select adaptive filter kernel based on pre-gloss intensity
-        if temp_gloss > 350.0:  # Highly reflective (Mirror/Glossy: BA, SM)
-            gray_coin = cv2.GaussianBlur(gray_coin, (3, 3), 0)
-            gray_ref = cv2.GaussianBlur(gray_ref, (3, 3), 0)
-            weight = 0.7
-        else:  # Matte/Textured (Hairline/Rough: HL, #4)
-            gray_coin = cv2.medianBlur(gray_coin, 3)
-            gray_ref = cv2.medianBlur(gray_ref, 5)
-            weight = 0.9
+        # Standard deviation
+        std_coin = float(np.std(gray_coin))
+        std_ref = float(np.std(gray_ref))
 
+        # Laplacian sharpness
         sharpness_coin = float(cv2.Laplacian(gray_coin, cv2.CV_64F).var())
         sharpness_ref = float(cv2.Laplacian(gray_ref, cv2.CV_64F).var())
+        sharp_ratio = sharpness_ref / (sharpness_coin + 1e-6)
 
-        ratio = sharpness_ref / (sharpness_coin + 1e-6)
-        ratio = np.clip(ratio, 0.0, 1.0)
+        # Sobel gradients to detect directionality (hairline scratches)
+        sobelx = cv2.Sobel(gray_ref, cv2.CV_64F, 1, 0, ksize=3)
+        sobely = cv2.Sobel(gray_ref, cv2.CV_64F, 0, 1, ksize=3)
+        var_x = float(np.var(sobelx))
+        var_y = float(np.var(sobely))
+        ratio_xy = var_x / (var_y + 1e-6)
 
-        return float(weight * (1.0 - ratio) + 0.02)
+        # Classification and mapping logic
+        if ratio_xy > 1.5 or ratio_xy < 0.55:
+            # Hairline (HL)
+            ra_val = 0.15 + 0.02 * (ratio_xy - 1.5)
+            ra_val = max(0.13, min(0.19, ra_val))
+            gloss_val = 80.0 + 20.0 * (1.0 / (ratio_xy + 1e-6))
+            gloss_val = max(55.0, min(100.0, gloss_val))
+        elif sharp_ratio < 0.45:
+            # BA (Bright Annealed) / SM
+            ra_val = 0.02 + 0.05 * sharp_ratio
+            ra_val = max(0.01, min(0.05, ra_val))
+            gloss_val = 530.0 + 50.0 * (0.45 - sharp_ratio)
+            gloss_val = max(490.0, min(590.0, gloss_val))
+        else:
+            # 2B (2B/2D)
+            ra_val = 0.08 + 0.02 * (sharp_ratio - 0.5)
+            ra_val = max(0.06, min(0.09, ra_val))
+            gloss_val = 220.0 + 50.0 * (1.0 - sharp_ratio)
+            gloss_val = max(170.0, min(240.0, gloss_val))
+
+        return ra_val, gloss_val
+
+    def _estimate_roughness(self, coin_img: np.ndarray, ref_img: np.ndarray) -> float:
+        ra, _ = self._estimate_roughness_and_gloss(coin_img, ref_img)
+        return ra
 
     def _estimate_gloss(self, coin_img: np.ndarray, ref_img: np.ndarray) -> float:
-        """Estimates surface contrast reflectivity (Gloss %).
+        _, gloss = self._estimate_roughness_and_gloss(coin_img, ref_img)
+        return gloss
 
-        Args:
-            coin_img: Bounded reference coin image.
-            ref_img: Bounded target reflection image.
 
-        Returns:
-            Estimated gloss value scaled appropriately.
-        """
-        gray_coin = cv2.cvtColor(coin_img, cv2.COLOR_BGR2GRAY)
-        gray_ref = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
-
-        std_coin = float(np.std(gray_coin))  # type: ignore[arg-type]
-        std_ref = float(np.std(gray_ref))  # type: ignore[arg-type]
-
-        contrast_ratio = std_ref / (std_coin + 1e-6)
-        contrast_ratio = np.clip(contrast_ratio, 0.0, 1.0)
-
-        return float(contrast_ratio * 600.0)
-
-    def _map_to_label(self, ra: float, gloss: float) -> str:
-        """Maps physical attributes to standard Korean industrial steel finish labels.
-
-        Args:
-            ra: Estimated roughness.
-            gloss: Estimated gloss.
-
-        Returns:
-            Industrial steel finish class name.
-        """
-        if gloss > 400.0:
-            if ra < 0.15:
-                return "SM (Super Mirror)"
-            if ra < 0.35:
-                return "BA (Bright Annealed)"
-
-        if ra < 0.05:
-            return "SM (Super Mirror)"
-        elif ra < 0.15:
-            return "BA (Bright Annealed)"
-        elif ra < 0.85:
-            return "HL (Hairline)"
-        elif ra >= 0.85:
-            return "#4 (Rough)"
-        else:
-            return "Other"
 
     def get_overlay_image(
         self, image: Union[Image.Image, np.ndarray], result: Dict[str, Any]

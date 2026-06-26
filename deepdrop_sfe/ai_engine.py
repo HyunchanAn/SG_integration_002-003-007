@@ -58,6 +58,7 @@ class AIContactAngleAnalyzer:
         try:
             self.model = build_sam2_hf(model_id, device=self.device)
             self.predictor = SAM2ImagePredictor(self.model)
+            self.mask_generator = None
             print(f"SAM 2.1 ({model_id}) 로드 완료.")
         except Exception as e:
             print(f"SAM 2.1 모델 로드 실패: {e}")
@@ -66,6 +67,7 @@ class AIContactAngleAnalyzer:
                 try:
                     self.model = build_sam2_hf("facebook/sam2.1-hiera-tiny", device=self.device)
                     self.predictor = SAM2ImagePredictor(self.model)
+                    self.mask_generator = None
                     print("Tiny 모델로 정상 복구되었습니다.")
                 except Exception as e2:
                     raise RuntimeError(f"모델 복구 시도 실패: {e2}")
@@ -214,109 +216,72 @@ class AIContactAngleAnalyzer:
             
         return mask > 0, 0.0
 
+    def _detect_candidates_via_grid(self, work_img_rgb):
+        """
+        torchvision.ops.nms CUDA NotImplementedError 오류를 회피하기 위해,
+        SAM2AutomaticMaskGenerator 대신 SAM2ImagePredictor를 사용하여 Grid 기반 후보를 직접 추출
+        """
+        h, w = work_img_rgb.shape[:2]
+        self.set_image(work_img_rgb)
+        
+        # 작은 액적이 포인트 사이에 비껴가지 않도록 10x10 그리드로 조밀화
+        xs = np.linspace(w * 0.1, w * 0.9, 10)
+        ys = np.linspace(h * 0.1, h * 0.9, 10)
+        
+        detected_masks = []
+        
+        def compute_iou(mask1, mask2):
+            intersection = np.logical_and(mask1, mask2).sum()
+            union = np.logical_or(mask1, mask2).sum()
+            return intersection / (union + 1e-6)
+            
+        for x in xs:
+            for y in ys:
+                coords = np.array([[x, y]])
+                labels = np.array([1])
+                
+                mask, score = self.predict_mask(point_coords=coords, point_labels=labels, multimask_output=False)
+                
+                if score < 0.75:
+                    continue
+                    
+                area = np.sum(mask)
+                area_ratio = area / (w * h)
+                if not (0.0005 < area_ratio < 0.15):
+                    continue
+                    
+                # 중복 여부 체크
+                duplicate = False
+                for existing in detected_masks:
+                    if compute_iou(existing['segmentation'], mask) > 0.70:
+                        duplicate = True
+                        break
+                
+                if not duplicate:
+                    pos = np.where(mask)
+                    if len(pos[0]) == 0:
+                        continue
+                    ymin, ymax = pos[0].min(), pos[0].max()
+                    xmin, xmax = pos[1].min(), pos[1].max()
+                    bbox = [xmin, ymin, xmax - xmin, ymax - ymin]
+                    
+                    detected_masks.append({
+                        'segmentation': mask,
+                        'area': int(area),
+                        'predicted_iou': float(score),
+                        'stability_score': float(score),
+                        'bbox': bbox
+                    })
+        return detected_masks
+
     def auto_detect_coin_candidate(self, image_cv2):
         """
-        [V3] Edge Continuity Score와 타이트한 반경 탐색을 활용하여 오탐지 0% 달성
+        SAM2 Grid 탐색을 활용한 고정밀 동전 자동 검출
         """
         orig_h, orig_w = image_cv2.shape[:2]
-        try:
-            import streamlit as st
-            max_dim = st.session_state.get("max_image_size") or float('inf')
-        except:
-            max_dim = 800.0
-        scale = 1.0
         
-        if max(orig_h, orig_w) > max_dim:
-            scale = max_dim / float(max(orig_h, orig_w))
-            new_w = int(orig_w * scale)
-            new_h = int(orig_h * scale)
-            work_img = cv2.resize(image_cv2, (new_w, new_h), interpolation=cv2.INTER_AREA)
-        else:
-            work_img = image_cv2
-
-        h, w = work_img.shape[:2]
-        gray = cv2.cvtColor(work_img, cv2.COLOR_BGR2GRAY)
-
-        clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
-        gray_pre = clahe.apply(gray)
-        gray_pre = cv2.medianBlur(gray_pre, 7)
-
-        # 동전 크기는 전체 이미지 높이의 7% ~ 12% 로 매우 제한적임
-        circles = cv2.HoughCircles(
-            gray_pre,
-            cv2.HOUGH_GRADIENT,
-            dp=1.1,
-            minDist=w // 5,
-            param1=50,
-            param2=30,
-            minRadius=int(h * 0.07),
-            maxRadius=int(h * 0.12),
-        )
-
-        if circles is not None:
-            circles = np.around(circles[0, :]).astype(np.int32)
-            best_candidate = None
-            max_score = -1.0
-
-            # Edge Continuity 측정용 Edge Map 생성
-            edges = cv2.Canny(gray, 50, 150)
-
-            for c in circles:
-                cx, cy, cr = c
-                if cx - cr < 0 or cx + cr >= w or cy - cr < 0 or cy + cr >= h:
-                    continue
-
-                mask = np.zeros_like(edges)
-                cv2.circle(mask, (int(cx), int(cy)), int(cr), 255, 3)
-                overlap = cv2.bitwise_and(edges, mask)
-                perimeter_pixels = np.sum(mask > 0)
-                if perimeter_pixels == 0: continue
-                
-                # 테두리에 실제로 존재하는 엣지 픽셀의 비율
-                score = float(np.sum(overlap > 0)) / float(perimeter_pixels)
-
-                if score > max_score:
-                    max_score = score
-                    best_candidate = c
-
-            if best_candidate is None:
-                best_candidate = circles[0]
-
-            x, y, r = best_candidate
-            pad = int(r * 0.1)
-
-            # Map coordinates back to original scale
-            inv_scale = 1.0 / scale
-            orig_x = int(x * inv_scale)
-            orig_y = int(y * inv_scale)
-            orig_r = int(r * inv_scale)
-            orig_pad = int(pad * inv_scale)
-
-            coin_box = [
-                max(0, orig_x - orig_r - orig_pad),
-                max(0, orig_y - orig_r - orig_pad),
-                min(orig_w, orig_x + orig_r + orig_pad),
-                min(orig_h, orig_y + orig_r + orig_pad),
-            ]
-            
-            box_arr = np.array(coin_box)
-            return box_arr, (float(orig_x), float(orig_y), float(orig_r))
-            
-        return None, None
-
-    def auto_detect_droplet_candidate(self, image_cv2, exclude_box=None, coin_radius=None):
-        """
-        [V5] 액적은 전체 이미지의 2%~6%에 해당하는 타이트한 반경 제약을 사용하여 검출함.
-        HL(헤어라인) 등 극도로 노이즈가 많은 배경에 대비해, 앱 단에서 마우스 오버라이드 툴이 제공됨.
-        """
-        orig_h, orig_w = image_cv2.shape[:2]
-        try:
-            import streamlit as st
-            max_dim = st.session_state.get("max_image_size") or float('inf')
-        except:
-            max_dim = 600.0
+        max_dim = 800.0
         scale = 1.0
-
         if max(orig_h, orig_w) > max_dim:
             scale = max_dim / float(max(orig_h, orig_w))
             new_w = int(orig_w * scale)
@@ -324,54 +289,161 @@ class AIContactAngleAnalyzer:
             work_img = cv2.resize(image_cv2, (new_w, new_h), interpolation=cv2.INTER_AREA)
         else:
             work_img = image_cv2.copy()
-
-        h, w = work_img.shape[:2]
-        
-        ex1, ey1, ex2, ey2 = -1, -1, -1, -1
-        if exclude_box is not None:
-            ex1 = int(exclude_box[0] * scale)
-            ey1 = int(exclude_box[1] * scale)
-            ex2 = int(exclude_box[2] * scale)
-            ey2 = int(exclude_box[3] * scale)
-            cv2.rectangle(work_img, (max(0, ex1), max(0, ey1)), (min(w, ex2), min(h, ey2)), (0, 0, 0), -1)
             
-        b, g, r_ch = cv2.split(work_img)
-        gray2 = cv2.addWeighted(b, 0.7, g, 0.3, 0)
-        gray_blur = cv2.GaussianBlur(gray2, (7, 7), 0)
-        clahe2 = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        gray_clahe = clahe2.apply(gray_blur.astype(np.uint8))
+        h, w = work_img.shape[:2]
+        rgb = cv2.cvtColor(work_img, cv2.COLOR_BGR2RGB)
         
-        min_r = h * 0.02
-        max_r = h * 0.06
+        # Grid 기반 SAM2 마스크 검출
+        masks = self._detect_candidates_via_grid(rgb)
         
-        circles = cv2.HoughCircles(
-            gray_clahe, cv2.HOUGH_GRADIENT, dp=1.2, minDist=20,
-            param1=50, param2=15, minRadius=int(min_r), maxRadius=int(max_r)
-        )
+        best_candidate = None
+        max_score = -1.0
         
-        best_box = None
+        for m in masks:
+            area = m['area']
+            predicted_iou = m['predicted_iou']
+            stability_score = m['stability_score']
+            
+            mask_u8 = m['segmentation'].astype(np.uint8) * 255
+            contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            circularity = 0.0
+            solidity = 0.0
+            if contours:
+                cnt = contours[0]
+                cnt_area = cv2.contourArea(cnt)
+                perimeter = cv2.arcLength(cnt, True)
+                if perimeter > 0:
+                    circularity = 4 * np.pi * cnt_area / (perimeter ** 2)
+                
+                hull = cv2.convexHull(cnt)
+                hull_area = cv2.contourArea(hull)
+                if hull_area > 0:
+                    solidity = cnt_area / hull_area
+            area_ratio = area / (w * h)
+            
+            # 동전 필터: 면적 3% ~ 15%, solidity > 0.85, circularity > 0.70
+            if (0.03 < area_ratio < 0.15) and (solidity > 0.85) and (circularity > 0.70):
+                # 면적이 클수록(area_ratio) 가중치를 주어 3%대의 물방울을 거르고 4%대 이상의 동전을 선택하도록 유도
+                score = predicted_iou * circularity * stability_score * area_ratio
+                if score > max_score:
+                    max_score = score
+                    bx, by, bw, bh = m['bbox']
+                    cx = bx + bw / 2.0
+                    cy = by + bh / 2.0
+                    cr = max(bw, bh) / 2.0
+                    best_candidate = (cx, cy, cr)
+                    
+        if best_candidate is not None:
+            cx, cy, r = best_candidate
+            pad = int(r * 0.1)
+            
+            inv_scale = 1.0 / scale
+            orig_x = int(cx * inv_scale)
+            orig_y = int(cy * inv_scale)
+            orig_r = int(r * inv_scale)
+            orig_pad = int(pad * inv_scale)
+            
+            coin_box = [
+                max(0, orig_x - orig_r - orig_pad),
+                max(0, orig_y - orig_r - orig_pad),
+                min(orig_w, orig_x + orig_r + orig_pad),
+                min(orig_h, orig_y + orig_r + orig_pad),
+            ]
+            box_arr = np.array(coin_box)
+            return box_arr, (float(orig_x), float(orig_y), float(orig_r))
+            
+        return None, None
+
+    def auto_detect_droplet_candidate(self, image_cv2, exclude_box=None, coin_radius=None):
+        """
+        SAM2 Grid 탐색을 활용한 고정밀 액적 자동 검출
+        """
+        orig_h, orig_w = image_cv2.shape[:2]
+        
+        max_dim = 800.0
+        scale = 1.0
+        if max(orig_h, orig_w) > max_dim:
+            scale = max_dim / float(max(orig_h, orig_w))
+            new_w = int(orig_w * scale)
+            new_h = int(orig_h * scale)
+            work_img = cv2.resize(image_cv2, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        else:
+            work_img = image_cv2.copy()
+            
+        h, w = work_img.shape[:2]
+        rgb = cv2.cvtColor(work_img, cv2.COLOR_BGR2RGB)
+        
+        # 훼손되지 않은 전체 이미지에서 마스크 일괄 생성
+        masks = self._detect_candidates_via_grid(rgb)
+        
+        best_candidate = None
         best_score = -1.0
         
-        if circles is not None:
-            circles = np.round(circles[0, :]).astype("int")
-            for (xc, yc, r) in circles:
-                if ex1 - 20 <= xc <= ex2 + 20 and ey1 - 20 <= yc <= ey2 + 20:
+        # [물리 격리 힌트] SFE 1단계에서 탐지된 동전 영역의 중심 및 반경 매핑
+        coin_cx_s, coin_cy_s, coin_r_s = -1.0, -1.0, -1.0
+        if exclude_box is not None:
+            coin_cx_orig = (exclude_box[0] + exclude_box[2]) / 2.0
+            coin_cy_orig = (exclude_box[1] + exclude_box[3]) / 2.0
+            coin_cx_s = coin_cx_orig * scale
+            coin_cy_s = coin_cy_orig * scale
+            
+            if coin_radius is not None:
+                coin_r_s = coin_radius * scale
+            else:
+                coin_r_s = ((exclude_box[2] - exclude_box[0]) / 2.3) * scale
+                
+        for m in masks:
+            area = m['area']
+            predicted_iou = m['predicted_iou']
+            
+            bx, by, bw, bh = m['bbox']
+            cx = bx + bw / 2.0
+            cy = by + bh / 2.0
+            r_est = max(bw, bh) / 2.0
+            
+            # 동전의 기하학적 중심과의 물리적 거리가 동전 반지름의 1.1배 이내라면 가짜 액적이므로 강제 배제
+            if coin_cx_s > 0 and coin_cy_s > 0 and coin_r_s > 0:
+                dist_to_coin = np.sqrt((cx - coin_cx_s)**2 + (cy - coin_cy_s)**2)
+                if dist_to_coin < coin_r_s * 1.1:
                     continue
+                
+            mask_u8 = m['segmentation'].astype(np.uint8) * 255
+            contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            circularity = 0.0
+            solidity = 0.0
+            if contours:
+                cnt = contours[0]
+                cnt_area = cv2.contourArea(cnt)
+                perimeter = cv2.arcLength(cnt, True)
+                if perimeter > 0:
+                    circularity = 4 * np.pi * cnt_area / (perimeter ** 2)
+                
+                hull = cv2.convexHull(cnt)
+                hull_area = cv2.contourArea(hull)
+                if hull_area > 0:
+                    solidity = cnt_area / hull_area
                     
-                dist_to_center = np.sqrt((xc - w/2.0)**2 + (yc - h/2.0)**2)
+            area_ratio = area / (w * h)
+            
+            # 액적 필터: 면적 0.1% ~ 8%, solidity > 0.80, circularity > 0.60
+            if (0.001 < area_ratio < 0.08) and (solidity > 0.80) and (circularity > 0.60):
+                dist_to_center = np.sqrt((cx - w/2.0)**2 + (cy - h/2.0)**2)
                 max_dist = np.sqrt((w/2.0)**2 + (h/2.0)**2)
                 center_score = 1.0 - (dist_to_center / (max_dist + 1e-6))
                 
-                score = center_score * (r ** 2)
+                # 중앙에 가까울수록, 그리고 상대적으로 크기가 작을수록(1.0 - area_ratio) 가중치를 주어 동전을 배제
+                score = predicted_iou * center_score * circularity * (1.0 - area_ratio)
                 if score > best_score:
                     best_score = score
-                    best_box = (xc, yc, r)
-
-        if best_box is not None:
-            cx, cy, r_est = best_box
+                    best_candidate = (cx, cy, r_est)
+                    
+        if best_candidate is not None:
+            cx, cy, r_est = best_candidate
             pad = r_est * 0.2
-            inv_scale = 1.0 / scale
             
+            inv_scale = 1.0 / scale
             orig_cx = cx * inv_scale
             orig_cy = cy * inv_scale
             orig_r = r_est * inv_scale

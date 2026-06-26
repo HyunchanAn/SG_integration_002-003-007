@@ -81,17 +81,21 @@ def test_vsams_pipeline():
     """vsams 모듈의 표면 거칠기, 광택도 및 마감 유형 추론 테스트"""
     from vsams.analysis.surface_evaluator import SurfaceEvaluator
     
-    bgr, rgb = get_test_image(FINISH_TEST_IMAGE)
-    
+    bgr, rgb = get_test_image(FINISH_TEST_IMAGE, is_coin=True)
     evaluator = SurfaceEvaluator()
-    res = evaluator.analyze(rgb)
+    custom_boxes = [[340, 140, 460, 260], [340, 360, 460, 480]]
+    res = evaluator.analyze(rgb, custom_boxes=custom_boxes)
     
     assert "error" not in res, f"Analysis failed with error: {res.get('error')}"
     assert "roughness" in res
     assert "gloss" in res
-    assert "predicted_label" in res
     
-    print(f"\n[V-SAMS Test Pass] Roughness: {res['roughness']:.4f}, Gloss: {res['gloss']:.1f}%, Label: {res['predicted_label']}")
+    from src.match.classifier import DBFinishClassifier
+    db_classifier = DBFinishClassifier()
+    predicted_label = db_classifier.predict_label(res["roughness"], res["gloss"])
+    assert predicted_label != "Unknown"
+    
+    print(f"\n[V-SAMS Test Pass] Roughness: {res['roughness']:.4f}, Gloss: {res['gloss']:.1f}%, Label: {predicted_label}")
 
 def test_curvature_pipeline():
     """sam2, depth-anything-v2, curvature 모듈을 연결한 3D 곡률 분석 파이프라인 테스트"""

@@ -58,6 +58,7 @@ from vsams.analysis.surface_evaluator import SurfaceEvaluator
 from src.seg.sam2_wrapper import SAM2BaseWrapper
 from src.topo.depth_wrapper import DepthAnythingV2Wrapper
 from src.curv.curvature import CurvatureAnalyzer
+from src.match.classifier import DBFinishClassifier
 
 # ---------------------------------------------------------------------------
 # Page Config (반드시 맨 앞에서 호출해야 함)
@@ -704,6 +705,7 @@ def _load_engines():
 
 with st.spinner(T["loading"]):
     sfe_analyzer, sfe_corrector, vsams_eval, sam2_w, depth_w, curv_a = _load_engines()
+db_classifier = DBFinishClassifier()
 
 # ---------------------------------------------------------------------------
 # Helper: 이미지 로딩 (UploadedFile -> BGR / RGB)
@@ -1516,7 +1518,7 @@ with st.expander("STEP 5.  " + T["tab4"], expanded=False):
         if vs_r:
             rows["Roughness (Ra)"] = round(vs_r["roughness"], 4)
             rows["Gloss (%)"] = round(vs_r["gloss"], 2)
-            rows["Metal Finish"] = vs_r["predicted_label"]
+            rows["Metal Finish"] = db_classifier.predict_label(vs_r["roughness"], vs_r["gloss"])
         if cv_r:
             rows["Max Gaussian K"] = round(cv_r["max_k"], 5)
             rows["Min Radius R (mm)"] = cv_r["min_r_mm"]
